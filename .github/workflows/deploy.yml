@@ -22,7 +22,7 @@ jobs:
           script: |
             set -euo pipefail
 
-            cd /agroeye-server
+            cd ~/Desktop/agroeye-server
 
             echo "==> Pulling latest code..."
             git pull origin main
