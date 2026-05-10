@@ -32,7 +32,7 @@ services:
       - "443:443"
       # Admin UI — localhost-only for zero-trust security.
       # Access via SSH tunnel or Tailscale.
-      - "127.0.0.1:81:81"
+      - "81:81"
 
     environment:
       DB_MYSQL_HOST: "npm_db"
@@ -124,7 +124,7 @@ services:
     restart: always
 
     ports:
-      - "127.0.0.1:8080:80"
+      - "8080:80"
 
     environment:
       PMA_HOST: saas_db
@@ -193,7 +193,11 @@ services:
       - .env
 
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/agroeye-api/')\" || exit 1"]
+      test:
+        [
+          "CMD-SHELL",
+          'python -c "import urllib.request; urllib.request.urlopen(''http://localhost:8000/agroeye-api/'')" || exit 1',
+        ]
       interval: 30s
       timeout: 10s
       retries: 5
