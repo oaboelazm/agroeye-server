@@ -84,34 +84,34 @@ The AgroEye server runs **7 Docker containers** across **4 isolated networks**, 
 
 ### Network Layers
 
-| Layer | Network | Purpose | Services |
-|-------|---------|---------|----------|
-| **Edge** | `edge_net` (external) | Public internet gateway. Only network bound to host ports `80`/`443` | `nginx-proxy-manager` |
-| **Infrastructure** | `infra_net` (external) | Air-gapped proxy config storage. Isolates NPM's internal database from all other services | `nginx-proxy-manager`, `npm_db` |
-| **Application** | `app_net` (bridge) | Frontend routing and backend execution. Proxied traffic only — frontends cannot reach the database | `nginx-proxy-manager`, `landing`, `app`, `api` |
-| **Data** | `data_net` (bridge) | Business data vault. Only `api` can read/write. Fully isolated from the public internet | `api`, `saas_db`, `phpmyadmin` |
+| Layer              | Network                | Purpose                                                                                            | Services                                       |
+| ------------------ | ---------------------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| **Edge**           | `edge_net` (external)  | Public internet gateway. Only network bound to host ports `80`/`443`                               | `nginx-proxy-manager`                          |
+| **Infrastructure** | `infra_net` (external) | Air-gapped proxy config storage. Isolates NPM's internal database from all other services          | `nginx-proxy-manager`, `npm_db`                |
+| **Application**    | `app_net` (bridge)     | Frontend routing and backend execution. Proxied traffic only — frontends cannot reach the database | `nginx-proxy-manager`, `landing`, `app`, `api` |
+| **Data**           | `data_net` (bridge)    | Business data vault. Only `api` can read/write. Fully isolated from the public internet            | `api`, `saas_db`, `phpmyadmin`                 |
 
 ### Service Inventory
 
-| Service | Image | Purpose | Networks | Exposed Ports |
-|---------|-------|---------|----------|---------------|
-| `nginx-proxy-manager` | `jc21/nginx-proxy-manager:2.12.1` | SSL termination, domain routing, Let's Encrypt | edge, infra, app | `80`, `443`, `127.0.0.1:81` |
-| `npm_db` | `mariadb:10.11` | NPM internal config database | infra | None |
-| `saas_db` | `mysql:8.0` | AgroEye business database (Users, Farms, Fields, Devices, Sensors, AI Results) | data | None |
-| `phpmyadmin` | `phpmyadmin/phpmyadmin:5.2` | Database admin UI (localhost-only) | data | `127.0.0.1:8080` |
-| `landing` | `nginx:1.27-alpine` | Static landing page | app | None (proxied) |
-| `app` | `nginx:1.27-alpine` | Static dashboard application | app | None (proxied) |
-| `api` | Custom (Python 3.12-slim) | FastAPI backend — all business logic | app, data | Internal `8000` only |
+| Service               | Image                             | Purpose                                                                        | Networks         | Exposed Ports               |
+| --------------------- | --------------------------------- | ------------------------------------------------------------------------------ | ---------------- | --------------------------- |
+| `nginx-proxy-manager` | `jc21/nginx-proxy-manager:2.12.1` | SSL termination, domain routing, Let's Encrypt                                 | edge, infra, app | `80`, `443`, `127.0.0.1:81` |
+| `npm_db`              | `mariadb:10.11`                   | NPM internal config database                                                   | infra            | None                        |
+| `saas_db`             | `mysql:8.0`                       | AgroEye business database (Users, Farms, Fields, Devices, Sensors, AI Results) | data             | None                        |
+| `phpmyadmin`          | `phpmyadmin/phpmyadmin:5.2`       | Database admin UI (localhost-only)                                             | data             | `127.0.0.1:8080`            |
+| `landing`             | `nginx:1.27-alpine`               | Static landing page                                                            | app              | None (proxied)              |
+| `app`                 | `nginx:1.27-alpine`               | Static dashboard application                                                   | app              | None (proxied)              |
+| `api`                 | Custom (Python 3.12-slim)         | FastAPI backend — all business logic                                           | app, data        | Internal `8000` only        |
 
 ### Persistent Volumes
 
-| Volume | Mounted In | Purpose |
-|--------|-----------|---------|
-| `npm_data` | nginx-proxy-manager | Proxy configuration, host rules |
-| `npm_letsencrypt` | nginx-proxy-manager | SSL certificates |
-| `npm_db_data` | npm_db | NPM MariaDB data |
-| `mysql_data` | saas_db | AgroEye business database files |
-| `api_uploads` | api → `/app/uploaded_scans` | User-uploaded crop images for AI analysis |
+| Volume            | Mounted In                  | Purpose                                   |
+| ----------------- | --------------------------- | ----------------------------------------- |
+| `npm_data`        | nginx-proxy-manager         | Proxy configuration, host rules           |
+| `npm_letsencrypt` | nginx-proxy-manager         | SSL certificates                          |
+| `npm_db_data`     | npm_db                      | NPM MariaDB data                          |
+| `mysql_data`      | saas_db                     | AgroEye business database files           |
+| `api_uploads`     | api → `/app/uploaded_scans` | User-uploaded crop images for AI analysis |
 
 ---
 
@@ -130,68 +130,76 @@ The API Engine is the core backend of AgroEye. It serves the mobile application,
 
 ### API Endpoints
 
-All endpoints are prefixed with `/agroeye-api` (via `root_path`).
+All endpoints are prefixed with `api.<server-name>` (via `root_path`).
 
 #### Authentication
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/mobile/auth/signup` | Register a new user (farmer, admin) |
-| POST | `/mobile/auth/login` | Login and receive a JWT access token |
+
+| Method | Path                  | Description                          |
+| ------ | --------------------- | ------------------------------------ |
+| POST   | `/mobile/auth/signup` | Register a new user (farmer, admin)  |
+| POST   | `/mobile/auth/login`  | Login and receive a JWT access token |
 
 #### Home (Dashboard Data)
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/mobile/home/get-farms` | Get all farms for a user |
-| POST | `/mobile/home/get-fields` | Get all fields in a farm |
-| POST | `/mobile/home/get-devices` | Get all IoT devices in a field |
-| POST | `/mobile/home/get-latest-reading` | Get most recent sensor reading for a device |
-| POST | `/mobile/home/get-notifications` | Get notifications for a user/farm |
-| POST | `/mobile/home/mark-notification-read` | Mark a notification as read |
-| POST | `/mobile/home/get-node-status` | Get summary of sensing node health per field |
+
+| Method | Path                                  | Description                                  |
+| ------ | ------------------------------------- | -------------------------------------------- |
+| POST   | `/mobile/home/get-farms`              | Get all farms for a user                     |
+| POST   | `/mobile/home/get-fields`             | Get all fields in a farm                     |
+| POST   | `/mobile/home/get-devices`            | Get all IoT devices in a field               |
+| POST   | `/mobile/home/get-latest-reading`     | Get most recent sensor reading for a device  |
+| POST   | `/mobile/home/get-notifications`      | Get notifications for a user/farm            |
+| POST   | `/mobile/home/mark-notification-read` | Mark a notification as read                  |
+| POST   | `/mobile/home/get-node-status`        | Get summary of sensing node health per field |
 
 #### Crop Scanning (Vision AI)
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/mobile/scan/upload` | Upload a crop image for analysis |
-| POST | `/mobile/scan/analyze` | Run AI analysis on an uploaded image |
-| POST | `/mobile/scan/history` | Get scan history for a field |
-| POST | `/mobile/scan/details` | Get details of a specific scan |
+
+| Method | Path                   | Description                          |
+| ------ | ---------------------- | ------------------------------------ |
+| POST   | `/mobile/scan/upload`  | Upload a crop image for analysis     |
+| POST   | `/mobile/scan/analyze` | Run AI analysis on an uploaded image |
+| POST   | `/mobile/scan/history` | Get scan history for a field         |
+| POST   | `/mobile/scan/details` | Get details of a specific scan       |
 
 #### Reports & Analytics
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/mobile/reports/get-readings` | Get sensor readings in a date range |
-| POST | `/mobile/reports/get-irrigation` | Get irrigation event history |
-| POST | `/mobile/reports/get-summary` | Get field summary (averages, latest reading, irrigation) |
+
+| Method | Path                             | Description                                              |
+| ------ | -------------------------------- | -------------------------------------------------------- |
+| POST   | `/mobile/reports/get-readings`   | Get sensor readings in a date range                      |
+| POST   | `/mobile/reports/get-irrigation` | Get irrigation event history                             |
+| POST   | `/mobile/reports/get-summary`    | Get field summary (averages, latest reading, irrigation) |
 
 #### Farm Management (CRUD)
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/mobile/manage/create-farm` | Create a new farm |
-| POST | `/mobile/manage/update-farm` | Update farm details |
-| POST | `/mobile/manage/delete-farm` | Delete a farm |
-| POST | `/mobile/manage/create-field` | Create a new field |
-| POST | `/mobile/manage/update-field` | Update field details |
-| POST | `/mobile/manage/delete-field` | Delete a field |
-| POST | `/mobile/manage/create-device` | Register a new IoT device |
-| POST | `/mobile/manage/update-device` | Update device details |
-| POST | `/mobile/manage/delete-device` | Remove a device |
+
+| Method | Path                           | Description               |
+| ------ | ------------------------------ | ------------------------- |
+| POST   | `/mobile/manage/create-farm`   | Create a new farm         |
+| POST   | `/mobile/manage/update-farm`   | Update farm details       |
+| POST   | `/mobile/manage/delete-farm`   | Delete a farm             |
+| POST   | `/mobile/manage/create-field`  | Create a new field        |
+| POST   | `/mobile/manage/update-field`  | Update field details      |
+| POST   | `/mobile/manage/delete-field`  | Delete a field            |
+| POST   | `/mobile/manage/create-device` | Register a new IoT device |
+| POST   | `/mobile/manage/update-device` | Update device details     |
+| POST   | `/mobile/manage/delete-device` | Remove a device           |
 
 #### AI Inference
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/ai/decide` | Run the decision engine on sensor data (irrigation, alerts) |
-| POST | `/ai/vision/analyze` | Run YOLO inference on a crop image (disease detection) |
+
+| Method | Path                 | Description                                                 |
+| ------ | -------------------- | ----------------------------------------------------------- |
+| POST   | `/ai/decide`         | Run the decision engine on sensor data (irrigation, alerts) |
+| POST   | `/ai/vision/analyze` | Run YOLO inference on a crop image (disease detection)      |
 
 #### Hardware / IoT
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/devices/{device_id}/log` | Ingest sensor data from field hardware nodes |
+
+| Method | Path                       | Description                                  |
+| ------ | -------------------------- | -------------------------------------------- |
+| POST   | `/devices/{device_id}/log` | Ingest sensor data from field hardware nodes |
 
 #### Health
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/` | Health check — returns status, uptime, and start time |
+
+| Method | Path | Description                                           |
+| ------ | ---- | ----------------------------------------------------- |
+| GET    | `/`  | Health check — returns status, uptime, and start time |
 
 ### Security Features
 
@@ -221,6 +229,7 @@ The API Dockerfile uses a **multi-stage build**:
 2. **Production stage** — Copies only the installed packages (no build tools), creates a non-root `appuser`, sets up runtime directories
 
 The entrypoint runs uvicorn directly as **PID 1** using `exec`, which ensures:
+
 - Docker `SIGTERM` signals are properly received for graceful shutdown
 - Proxy headers are forwarded (correct client IP behind NPM)
 - Logs stream directly to `docker logs`
@@ -254,12 +263,12 @@ ssh -L 81:127.0.0.1:81 user@server
 
 Only the following ports are open on the server:
 
-| Port | Protocol | Purpose |
-|------|----------|---------|
-| 22 | TCP | SSH |
-| 80 | TCP | HTTP (redirected to HTTPS by NPM) |
-| 443 | TCP | HTTPS |
-| tailscale0 | ALL | Tailscale VPN mesh traffic |
+| Port       | Protocol | Purpose                           |
+| ---------- | -------- | --------------------------------- |
+| 22         | TCP      | SSH                               |
+| 80         | TCP      | HTTP (redirected to HTTPS by NPM) |
+| 443        | TCP      | HTTPS                             |
+| tailscale0 | ALL      | Tailscale VPN mesh traffic        |
 
 ---
 
@@ -296,10 +305,10 @@ Push to main → GitHub Actions → SSH into server → Pull code → Build → 
 
 ### Required GitHub Repository Secrets
 
-| Secret | Description |
-|--------|-------------|
-| `SERVER_HOST` | Production server IP address or hostname |
-| `SERVER_USER` | SSH user on the server (e.g., `deploy`) |
+| Secret            | Description                                        |
+| ----------------- | -------------------------------------------------- |
+| `SERVER_HOST`     | Production server IP address or hostname           |
+| `SERVER_USER`     | SSH user on the server (e.g., `deploy`)            |
 | `SSH_PRIVATE_KEY` | RSA/Ed25519 private key for passwordless SSH login |
 
 ### Deployment Safety
@@ -408,18 +417,18 @@ ssh -L 81:127.0.0.1:81 user@server
 
 ## 🔧 Environment Variables
 
-| Variable | Used By | Description |
-|----------|---------|-------------|
-| `NPM_DB_ROOT_PASSWORD` | npm_db | Root password for NPM's MariaDB |
-| `NPM_DB_PASSWORD` | nginx-proxy-manager, npm_db | User password for NPM's MariaDB |
-| `MYSQL_ROOT_PASSWORD` | saas_db | Root password for the AgroEye MySQL database |
-| `MYSQL_DATABASE` | saas_db, api | Database name (default: `AgroEye`) |
-| `MYSQL_USER` | saas_db, api | Database user for the API |
-| `MYSQL_PASSWORD` | saas_db, api | Database password for the API |
-| `DB_HOST` | api | Hostname of the database (default: `saas_db`) |
-| `SECRET_KEY` | api | JWT signing key — generate with `openssl rand -hex 32` |
-| `UPLOAD_DIR` | api | Path inside the container for uploaded images (default: `/app/uploaded_scans`) |
-| `TAILSCALE_IP` | Reference | The server's Tailscale VPN IP address |
+| Variable               | Used By                     | Description                                                                    |
+| ---------------------- | --------------------------- | ------------------------------------------------------------------------------ |
+| `NPM_DB_ROOT_PASSWORD` | npm_db                      | Root password for NPM's MariaDB                                                |
+| `NPM_DB_PASSWORD`      | nginx-proxy-manager, npm_db | User password for NPM's MariaDB                                                |
+| `MYSQL_ROOT_PASSWORD`  | saas_db                     | Root password for the AgroEye MySQL database                                   |
+| `MYSQL_DATABASE`       | saas_db, api                | Database name (default: `AgroEye`)                                             |
+| `MYSQL_USER`           | saas_db, api                | Database user for the API                                                      |
+| `MYSQL_PASSWORD`       | saas_db, api                | Database password for the API                                                  |
+| `DB_HOST`              | api                         | Hostname of the database (default: `saas_db`)                                  |
+| `SECRET_KEY`           | api                         | JWT signing key — generate with `openssl rand -hex 32`                         |
+| `UPLOAD_DIR`           | api                         | Path inside the container for uploaded images (default: `/app/uploaded_scans`) |
+| `TAILSCALE_IP`         | Reference                   | The server's Tailscale VPN IP address                                          |
 
 ---
 
@@ -427,14 +436,14 @@ ssh -L 81:127.0.0.1:81 user@server
 
 Every service in the stack has a Docker healthcheck:
 
-| Service | Check | Interval | Start Period |
-|---------|-------|----------|--------------|
-| `nginx-proxy-manager` | `curl -fsS http://localhost:81/` | 30s | 30s |
-| `npm_db` | `mysqladmin ping` | 30s | 40s |
-| `saas_db` | `mysqladmin ping` | 30s | 60s |
-| `landing` | `wget -qO /dev/null http://localhost/` | 30s | 10s |
-| `app` | `wget -qO /dev/null http://localhost/` | 30s | 10s |
-| `api` | Python `urllib` request to `/agroeye-api/` | 30s | 30s |
+| Service               | Check                                      | Interval | Start Period |
+| --------------------- | ------------------------------------------ | -------- | ------------ |
+| `nginx-proxy-manager` | `curl -fsS http://localhost:81/`           | 30s      | 30s          |
+| `npm_db`              | `mysqladmin ping`                          | 30s      | 40s          |
+| `saas_db`             | `mysqladmin ping`                          | 30s      | 60s          |
+| `landing`             | `wget -qO /dev/null http://localhost/`     | 30s      | 10s          |
+| `app`                 | `wget -qO /dev/null http://localhost/`     | 30s      | 10s          |
+| `api`                 | Python `urllib` request to `/agroeye-api/` | 30s      | 30s          |
 
 Check health status:
 
@@ -486,19 +495,19 @@ See [`api/AGROEYE_API_CLI.md`](api/AGROEYE_API_CLI.md) for full CLI documentatio
 
 The AgroEye database (`saas_db`) contains the following tables:
 
-| Table | Description |
-|-------|-------------|
-| `Users` | User accounts (farmers, admins) with bcrypt-hashed passwords |
-| `Farms` | Farms owned by users |
-| `Fields` | Fields within farms (crop type, area) |
-| `Devices` | IoT devices deployed in fields |
-| `SensingNodes` | Individual sensing nodes within devices (battery, status) |
-| `SensorReadings` | Time-series sensor data (temperature, humidity, soil moisture, NPK, pH, CO₂, light) |
-| `SensorLog` | Raw hardware log ingestion table |
-| `Images` | Uploaded crop images for AI analysis |
-| `AIResults` | AI analysis results (disease detection, confidence, recommendations) |
-| `Notifications` | User notifications (alerts, warnings) |
-| `IrrigationEvents` | Irrigation event records |
+| Table              | Description                                                                         |
+| ------------------ | ----------------------------------------------------------------------------------- |
+| `Users`            | User accounts (farmers, admins) with bcrypt-hashed passwords                        |
+| `Farms`            | Farms owned by users                                                                |
+| `Fields`           | Fields within farms (crop type, area)                                               |
+| `Devices`          | IoT devices deployed in fields                                                      |
+| `SensingNodes`     | Individual sensing nodes within devices (battery, status)                           |
+| `SensorReadings`   | Time-series sensor data (temperature, humidity, soil moisture, NPK, pH, CO₂, light) |
+| `SensorLog`        | Raw hardware log ingestion table                                                    |
+| `Images`           | Uploaded crop images for AI analysis                                                |
+| `AIResults`        | AI analysis results (disease detection, confidence, recommendations)                |
+| `Notifications`    | User notifications (alerts, warnings)                                               |
+| `IrrigationEvents` | Irrigation event records                                                            |
 
 ---
 
@@ -507,6 +516,7 @@ The AgroEye database (`saas_db`) contains the following tables:
 This repository has undergone a full production-readiness audit. The following hardening measures are in place:
 
 ### Docker
+
 - ✅ All images pinned to specific versions (no `latest` tags)
 - ✅ Multi-stage Dockerfile (smaller production image)
 - ✅ Non-root container user (`appuser`)
@@ -518,6 +528,7 @@ This repository has undergone a full production-readiness audit. The following h
 - ✅ MySQL start_period allows for initialization time
 
 ### API Backend
+
 - ✅ CORS middleware enabled
 - ✅ Security headers on all responses
 - ✅ Global exception handler (no stack trace leaks)
@@ -529,6 +540,7 @@ This repository has undergone a full production-readiness audit. The following h
 - ✅ Parameterized SQL queries (no SQL injection)
 
 ### CI/CD
+
 - ✅ Idempotent network creation
 - ✅ Orphan container cleanup (`--remove-orphans`)
 - ✅ Post-deploy health verification
@@ -536,6 +548,7 @@ This repository has undergone a full production-readiness audit. The following h
 - ✅ Pinned GitHub Action versions
 
 ### Security
+
 - ✅ `.gitignore` prevents secret/artifact commits
 - ✅ `.dockerignore` minimizes build context
 - ✅ UFW firewall rules documented
