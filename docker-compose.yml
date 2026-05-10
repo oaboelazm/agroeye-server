@@ -1,0 +1,221 @@
+networks:
+  edge_net:
+    external: true
+
+  infra_net:
+    external: true
+
+  app_net:
+    driver: bridge
+
+  data_net:
+    driver: bridge
+
+services:
+  # ----------------------------------------------------
+  # Reverse Proxy (NPM)
+  # ----------------------------------------------------
+  nginx-proxy-manager:
+    image: jc21/nginx-proxy-manager:2.12.1
+    container_name: reverse-proxy
+    restart: always
+
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:81/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+    ports:
+      - "80:80"
+      - "443:443"
+      # Admin UI — localhost-only for zero-trust security.
+      # Access via SSH tunnel or Tailscale.
+      - "127.0.0.1:81:81"
+
+    environment:
+      DB_MYSQL_HOST: "npm_db"
+      DB_MYSQL_PORT: 3306
+      DB_MYSQL_USER: "npm"
+      DB_MYSQL_PASSWORD: "${NPM_DB_PASSWORD}"
+      DB_MYSQL_NAME: "npm"
+
+    volumes:
+      - npm_data:/data
+      - npm_letsencrypt:/etc/letsencrypt
+
+    networks:
+      - edge_net
+      - app_net
+      - infra_net
+
+    depends_on:
+      npm_db:
+        condition: service_healthy
+
+  # ----------------------------------------------------
+  # NPM Database
+  # ----------------------------------------------------
+  npm_db:
+    image: mariadb:10.11
+    container_name: npm_db
+    restart: always
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "MYSQL_PWD=$$MYSQL_ROOT_PASSWORD mysqladmin ping -h 127.0.0.1 -u root || exit 1",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+    environment:
+      MYSQL_ROOT_PASSWORD: "${NPM_DB_ROOT_PASSWORD}"
+      MYSQL_DATABASE: "npm"
+      MYSQL_USER: "npm"
+      MYSQL_PASSWORD: "${NPM_DB_PASSWORD}"
+
+    volumes:
+      - npm_db_data:/var/lib/mysql
+    networks:
+      - infra_net
+
+  # ----------------------------------------------------
+  # SaaS DB
+  # ----------------------------------------------------
+  saas_db:
+    image: mysql:8.0
+    container_name: saas_db
+    restart: always
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "MYSQL_PWD=$$MYSQL_ROOT_PASSWORD mysqladmin ping -h 127.0.0.1 -u root || exit 1",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+    environment:
+      MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD}"
+      MYSQL_DATABASE: "${MYSQL_DATABASE}"
+      MYSQL_USER: "${MYSQL_USER}"
+      MYSQL_PASSWORD: "${MYSQL_PASSWORD}"
+
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - data_net
+
+  # ----------------------------------------------------
+  # phpMyAdmin — localhost-only for zero-trust security.
+  # Access via SSH tunnel or Tailscale.
+  # ----------------------------------------------------
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin:5.2
+    container_name: phpmyadmin
+    restart: always
+
+    ports:
+      - "127.0.0.1:8080:80"
+
+    environment:
+      PMA_HOST: saas_db
+      PMA_PORT: 3306
+      UPLOAD_LIMIT: 300M
+
+    networks:
+      - data_net
+
+    depends_on:
+      saas_db:
+        condition: service_healthy
+
+  # ----------------------------------------------------
+  # Landing Page (Static)
+  # ----------------------------------------------------
+  landing:
+    image: nginx:1.27-alpine
+    container_name: landing
+    restart: always
+
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO /dev/null http://localhost/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    volumes:
+      - ./landing:/usr/share/nginx/html:ro
+    networks:
+      - app_net
+
+  # ----------------------------------------------------
+  # App Dashboard (Static)
+  # ----------------------------------------------------
+  app:
+    image: nginx:1.27-alpine
+    container_name: app
+    restart: always
+
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO /dev/null http://localhost/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    volumes:
+      - ./app:/usr/share/nginx/html:ro
+    networks:
+      - app_net
+
+  # ----------------------------------------------------
+  # API Engine (FastAPI)
+  # ----------------------------------------------------
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+
+    container_name: api
+    restart: always
+
+    env_file:
+      - .env
+
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/agroeye-api/')\" || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+    volumes:
+      - api_uploads:/app/uploaded_scans
+
+    expose:
+      - "8000"
+
+    depends_on:
+      saas_db:
+        condition: service_healthy
+
+    networks:
+      - app_net
+      - data_net
+
+volumes:
+  npm_data:
+  npm_letsencrypt:
+  npm_db_data:
+  mysql_data:
+  api_uploads:

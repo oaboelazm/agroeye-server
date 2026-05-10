@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+ROOT_DIR="${AGROEYE_ROOT:-$(cd "$(dirname "$SCRIPT_PATH")" && pwd)}"
+CLI_PATH="$ROOT_DIR/tools/agroeye_api_cli.py"
+
+if [[ ! -f "$CLI_PATH" ]]; then
+  echo "CLI not found: $CLI_PATH" >&2
+  exit 1
+fi
+
+PYTHON_BIN="${AGROEYE_PYTHON:-}"
+if [[ -z "$PYTHON_BIN" ]]; then
+  if [[ -x "$ROOT_DIR/venv/bin/python" ]]; then
+    PYTHON_BIN="$ROOT_DIR/venv/bin/python"
+  elif [[ -x "$ROOT_DIR/../venv/bin/python" ]]; then
+    PYTHON_BIN="$ROOT_DIR/../venv/bin/python"
+  else
+    PYTHON_BIN="python3"
+  fi
+fi
+
+exec "$PYTHON_BIN" "$CLI_PATH" "$@"

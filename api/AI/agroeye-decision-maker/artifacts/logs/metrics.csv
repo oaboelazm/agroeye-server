@@ -1,0 +1,2 @@
+timestamp_utc,mode,n_train,n_val,n_test,n_features,imitation_val_mae,imitation_test_mae,imitation_val_mape,safety_violation_rate_pre_clamp,safety_violation_rate_post_clamp,backtest_cumulative_pred_reward,backtest_water_usage_proxy,backtest_energy_proxy,backtest_safety_clamp_rate,backtest_time_in_range_temp,backtest_time_in_range_rh,composite_score
+2026-03-23T19:50:07.782000+00:00,imitation,30000,8000,8000,383,4089.5222437449142,7544.033191503485,2205793.9813046465,0.999875,0.8225,-34451.222472680725,5.0,5438.5837897839365,0.8225,0.471125,0.38275,-1.6091859454572592
