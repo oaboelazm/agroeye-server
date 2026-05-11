@@ -38,7 +38,7 @@ async def lifespan(application: FastAPI):
 
 app = FastAPI(
     title="AGROEYE API Engine",
-    root_path="/",
+    root_path="/agroeye-api/",
     lifespan=lifespan,
     docs_url="/docs",
     redoc_url="/redoc",
