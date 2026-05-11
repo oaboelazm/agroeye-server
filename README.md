@@ -54,7 +54,7 @@ The AgroEye server runs **7 Docker containers** across **4 isolated networks**, 
 
 ```
                         ┌─────────────────────────────────┐
-                        │         PUBLIC INTERNET          │
+                        │         PUBLIC INTERNET         │
                         └────────────┬────┬───────────────┘
                                      │:80 │:443
                         ┌────────────▼────▼───────────────┐
@@ -63,7 +63,7 @@ The AgroEye server runs **7 Docker containers** across **4 isolated networks**, 
             │           │   Admin UI: 127.0.0.1:81 only   │          │
             │           └──────┬─────────┬────────┬───────┘          │
             │                  │         │        │                  │
-      ┌─────▼─────┐    ┌──────▼──┐  ┌───▼──┐  ┌──▼──┐        ┌─────▼─────┐
+      ┌─────▼──────┐    ┌──────▼──┐  ┌───▼──┐  ┌──▼──┐        ┌─────▼─────┐
       │  npm_db    │    │ landing │  │ app  │  │ api │        │  npm_db   │
       │ MariaDB    │    │  nginx  │  │nginx │  │Fast │        │(config DB)│
       │ 10.11      │    │ static  │  │static│  │ API │        │           │
@@ -74,7 +74,7 @@ The AgroEye server runs **7 Docker containers** across **4 isolated networks**, 
                                              │  (AgroEye) │
                                              └─────┬──────┘
                                                    │
-                                             ┌─────▼──────┐
+                                             ┌─────▼───────┐
                                              │ phpMyAdmin  │
                                              │ 127.0.0.1   │
                                              │ :8080 only  │
@@ -130,7 +130,7 @@ The API Engine is the core backend of AgroEye. It serves the mobile application,
 
 ### API Endpoints
 
-All endpoints are prefixed with `api.<server-name>` (via `root_path`).
+All endpoints are prefixed with `api.<server-domain>` (via `root_path`).
 
 #### Authentication
 
@@ -368,7 +368,7 @@ sudo usermod -aG docker $USER
 
 ```bash
 cd /
-sudo git clone https://github.com/YOUR_ORG/agroeye-server.git
+sudo git clone https://github.com/oaboelazm/agroeye-server.git
 cd /agroeye-server
 
 # Create environment file
@@ -436,14 +436,14 @@ ssh -L 81:127.0.0.1:81 user@server
 
 Every service in the stack has a Docker healthcheck:
 
-| Service               | Check                                      | Interval | Start Period |
-| --------------------- | ------------------------------------------ | -------- | ------------ |
-| `nginx-proxy-manager` | `curl -fsS http://localhost:81/`           | 30s      | 30s          |
-| `npm_db`              | `mysqladmin ping`                          | 30s      | 40s          |
-| `saas_db`             | `mysqladmin ping`                          | 30s      | 60s          |
-| `landing`             | `wget -qO /dev/null http://localhost/`     | 30s      | 10s          |
-| `app`                 | `wget -qO /dev/null http://localhost/`     | 30s      | 10s          |
-| `api`                 | Python `urllib` request to `/agroeye-api/` | 30s      | 30s          |
+| Service               | Check                                             | Interval | Start Period |
+| --------------------- | ------------------------------------------------- | -------- | ------------ |
+| `nginx-proxy-manager` | `curl -fsS http://localhost:81/`                  | 30s      | 30s          |
+| `npm_db`              | `mysqladmin ping`                                 | 30s      | 40s          |
+| `saas_db`             | `mysqladmin ping`                                 | 30s      | 60s          |
+| `landing`             | `wget -qO /dev/null http://localhost/`            | 30s      | 10s          |
+| `app`                 | `wget -qO /dev/null http://localhost/`            | 30s      | 10s          |
+| `api`                 | Python `urllib` request to `api.<server-domain>/` | 30s      | 30s          |
 
 Check health status:
 
