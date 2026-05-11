@@ -43,4 +43,4 @@ USER appuser
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/')" || exit 1
 
-CMD ["bash", "/api/entrypoint.sh"]
+CMD ["bash", "/app/entrypoint.sh"]
