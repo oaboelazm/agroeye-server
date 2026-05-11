@@ -266,7 +266,7 @@ def signup_user(data: SignupRequest, db: Session = Depends(get_db)):
 
     clean_password = data.password.strip()
 
-    if len(clean_password.encode("utf-8")) > 256:
+    if len(clean_password.encode("utf-8")) > 72:
         raise HTTPException(status_code=400, detail="Password too long")
 
     hashed_password = pwd_context.hash(clean_password)
