@@ -1,51 +1,43 @@
-FROM python:3.11-slim AS builder
+FROM python:3.12-slim AS builder
 
 WORKDIR /build
 
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    gcc \
-    g++ \
-    python3-dev \
-    libgl1 \
-    libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/*
-
 COPY requirements.txt .
-
-RUN pip install --upgrade pip
-
-RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
-
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt --log /tmp/pip.log
 
 # ─── Production stage ────────────────────────────────────────
-FROM python:3.11-slim
+FROM python:3.12-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    libgl1 \
-    libglib2.0-0 \
+# Install only curl for healthcheck
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
-RUN groupadd -r appuser && \
-    useradd -r -g appuser -d /app -s /sbin/nologin appuser
+# Create non-root user
+RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser
 
 WORKDIR /app
 
+# Copy installed Python packages from builder
 COPY --from=builder /install /usr/local
 
+# Copy application code
 COPY . .
 
-RUN chmod +x /app/agroeye-api && \
-    ln -s /app/agroeye-api /usr/local/bin/agroeye-api
+# Setup CLI symlink
+RUN chmod +x /app/agroeye-api \
+    && ln -s /app/agroeye-api /usr/local/bin/agroeye-api
 
+# Setup entrypoint
 RUN chmod +x /app/entrypoint.sh
 
-RUN mkdir -p /app/.run /app/uploaded_scans /app/upload && \
-    chown -R appuser:appuser /app
+# Create runtime directories and set ownership
+RUN mkdir -p /app/.run /app/uploaded_scans /app/upload \
+    && chown -R appuser:appuser /app
 
 EXPOSE 8000
 
+# Switch to non-root user
 USER appuser
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
