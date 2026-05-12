@@ -57,7 +57,7 @@ const STEPS = [
 
 function completeOnboarding(navigate: ReturnType<typeof useNavigate>) {
   localStorage.setItem("agroeye_onboarding_completed", "true");
-  navigate("/dashboard/overview", { replace: true });
+  navigate("/", { replace: true });
 }
 
 export function OnboardingPage() {

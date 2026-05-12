@@ -8,11 +8,17 @@ RUN pip install --no-cache-dir --prefix=/install -r requirements.txt --log /tmp/
 # ─── Production stage ────────────────────────────────────────
 FROM python:3.12-slim
 
-# Install only curl for healthcheck
+# Install system dependencies for OpenCV + curl for healthcheck
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
+    && apt-get install -y --no-install-recommends \
+        curl \
+        libgl1 \
+        libglib2.0-0 \
+        libsm6 \
+        libxext6 \
+        libxrender-dev \
+        libxcb1 \
     && rm -rf /var/lib/apt/lists/*
-
 # Create non-root user
 RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser
 

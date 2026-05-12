@@ -20,7 +20,7 @@ export function LoginPage() {
     try {
       await login(email, password);
       const onboardingDone = localStorage.getItem("agroeye_onboarding_completed") === "true";
-      navigate(onboardingDone ? "/dashboard/overview" : "/onboarding", { replace: true });
+      navigate(onboardingDone ? "/" : "/onboarding", { replace: true });
     } catch (err: any) {
       setError(err.message || "Login failed");
     }

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Link, Outlet, useLocation } from "react-router";
+import { useNavigate } from "react-router";
 import {
   LayoutDashboard,
   LineChart,
@@ -8,7 +8,6 @@ import {
   ScanLine,
   FileText,
   Settings,
-  Menu,
   Moon,
   Sun,
   Leaf,
@@ -18,7 +17,6 @@ import {
   Bell,
   Wheat,
   Grid3X3,
-  User,
 } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
@@ -43,42 +41,61 @@ import {
 import { cn } from "../components/ui/utils";
 import { motion, AnimatePresence } from "motion/react";
 import { NotificationsDropdown } from "../components/dashboard/NotificationsDropdown";
+import { OverviewPage } from "../pages/dashboard/OverviewPage";
+import { AnalyticsPage } from "../pages/dashboard/AnalyticsPage";
+import { FarmsPage } from "../pages/dashboard/FarmsPage";
+import { FieldsPage } from "../pages/dashboard/FieldsPage";
+import { DeviceManagementPage } from "../pages/dashboard/DeviceManagementPage";
+import { AIAssistantPage } from "../pages/dashboard/AIAssistantPage";
+import { ScansPage } from "../pages/dashboard/ScansPage";
+import { ReportsPage } from "../pages/dashboard/ReportsPage";
+import { NotificationsPage } from "../pages/dashboard/NotificationsPage";
+import { SettingsPage } from "../pages/dashboard/SettingsPage";
 
-const SIDEBAR_ITEMS = [
-  { icon: LayoutDashboard, label: "Dashboard", path: "/dashboard/overview" },
-  { icon: Grid3X3, label: "Farms", path: "/dashboard/farms" },
-  { icon: Wheat, label: "Fields", path: "/dashboard/fields" },
-  { icon: Cpu, label: "Devices", path: "/dashboard/devices" },
-  { icon: FileText, label: "Reports", path: "/dashboard/reports" },
-  { icon: LineChart, label: "Analytics", path: "/dashboard/analytics" },
-  { icon: Bot, label: "AI Insights", path: "/dashboard/ai-assistant" },
-  { icon: ScanLine, label: "Scans", path: "/dashboard/scans" },
-  { icon: Bell, label: "Notifications", path: "/dashboard/notifications" },
-  { icon: Settings, label: "Settings", path: "/dashboard/settings" },
+type PageKey = "overview" | "farms" | "fields" | "devices" | "reports" | "analytics" | "ai-assistant" | "scans" | "notifications" | "settings";
+
+const PAGES: Record<PageKey, React.ComponentType> = {
+  overview: OverviewPage,
+  farms: FarmsPage,
+  fields: FieldsPage,
+  devices: DeviceManagementPage,
+  reports: ReportsPage,
+  analytics: AnalyticsPage,
+  "ai-assistant": AIAssistantPage,
+  scans: ScansPage,
+  notifications: NotificationsPage,
+  settings: SettingsPage,
+};
+
+const SIDEBAR_ITEMS: { icon: React.ElementType; label: string; key: PageKey }[] = [
+  { icon: LayoutDashboard, label: "Dashboard", key: "overview" },
+  { icon: Grid3X3, label: "Farms", key: "farms" },
+  { icon: Wheat, label: "Fields", key: "fields" },
+  { icon: Cpu, label: "Devices", key: "devices" },
+  { icon: FileText, label: "Reports", key: "reports" },
+  { icon: LineChart, label: "Analytics", key: "analytics" },
+  { icon: Bot, label: "AI Insights", key: "ai-assistant" },
+  { icon: ScanLine, label: "Scans", key: "scans" },
+  { icon: Bell, label: "Notifications", key: "notifications" },
+  { icon: Settings, label: "Settings", key: "settings" },
 ];
 
 export function DashboardLayout() {
   const [collapsed, setCollapsed] = useState(() => {
-    try {
-      return localStorage.getItem("agroeye_sidebar_collapsed") === "true";
-    } catch {
-      return false;
-    }
+    try { return localStorage.getItem("agroeye_sidebar_collapsed") === "true"; } catch { return false; }
   });
+  const [currentPage, setCurrentPage] = useState<PageKey>("overview");
   const { user, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const { farms, activeFarmId, setActiveFarmId, unreadCount } = useAppData();
-  const location = useLocation();
+  const navigate = useNavigate();
 
   useEffect(() => {
-    try {
-      localStorage.setItem("agroeye_sidebar_collapsed", String(collapsed));
-    } catch {}
+    try { localStorage.setItem("agroeye_sidebar_collapsed", String(collapsed)); } catch {}
   }, [collapsed]);
 
-  const initials = user?.username
-    ? user.username.slice(0, 2).toUpperCase()
-    : "AG";
+  const initials = user?.username ? user.username.slice(0, 2).toUpperCase() : "AG";
+  const PageComponent = PAGES[currentPage];
 
   return (
     <div className="flex h-screen bg-background text-foreground overflow-hidden font-sans">
@@ -91,7 +108,7 @@ export function DashboardLayout() {
       >
         <div className="h-16 flex items-center px-4 border-b border-border justify-between shrink-0 relative">
           <div className={cn("flex items-center transition-all duration-300 w-full", collapsed ? "justify-center" : "")}>
-            <Link to="/dashboard/overview" className="flex items-center gap-2 font-bold text-lg tracking-tight text-emerald-500 shrink-0">
+            <button onClick={() => setCurrentPage("overview")} className="flex items-center gap-2 font-bold text-lg tracking-tight text-emerald-500 shrink-0 cursor-pointer">
               <div className="bg-emerald-500/10 p-1.5 rounded-lg border border-emerald-500/20">
                 <Leaf className="h-5 w-5" />
               </div>
@@ -107,7 +124,7 @@ export function DashboardLayout() {
                   </motion.span>
                 )}
               </AnimatePresence>
-            </Link>
+            </button>
           </div>
           <Button
             variant="outline"
@@ -121,37 +138,38 @@ export function DashboardLayout() {
 
         <div className="flex-1 overflow-y-auto py-6 px-3 flex flex-col gap-1.5 scrollbar-none">
           {SIDEBAR_ITEMS.map((item) => {
-            const isActive = location.pathname === item.path;
+            const isActive = currentPage === item.key;
             return (
-              <Link key={item.path} to={item.path} title={collapsed ? item.label : undefined}>
-                <div
-                  className={cn(
-                    "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group relative",
-                    isActive
-                      ? "bg-emerald-500/10 text-emerald-500 font-medium border border-emerald-500/20 shadow-sm"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground border border-transparent"
+              <button
+                key={item.key}
+                onClick={() => setCurrentPage(item.key)}
+                title={collapsed ? item.label : undefined}
+                className={cn(
+                  "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group relative w-full text-left",
+                  isActive
+                    ? "bg-emerald-500/10 text-emerald-500 font-medium border border-emerald-500/20 shadow-sm"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground border border-transparent"
+                )}
+              >
+                {isActive && <motion.div layoutId="active-indicator" className="absolute left-0 w-1 h-5 bg-emerald-500 rounded-r-full" />}
+                <div className="relative">
+                  <item.icon className={cn("h-5 w-5 shrink-0", isActive ? "text-emerald-500" : "")} />
+                  {item.key === "notifications" && unreadCount > 0 && !collapsed && (
+                    <span className="absolute -top-1.5 -right-1.5 h-3.5 w-3.5 bg-red-500 rounded-full text-[8px] text-white font-bold flex items-center justify-center">
+                      {unreadCount > 9 ? "9+" : unreadCount}
+                    </span>
                   )}
-                >
-                  {isActive && <motion.div layoutId="active-indicator" className="absolute left-0 w-1 h-5 bg-emerald-500 rounded-r-full" />}
-                  <div className="relative">
-                    <item.icon className={cn("h-5 w-5 shrink-0", isActive ? "text-emerald-500" : "group-hover:text-foreground")} />
-                    {item.label === "Notifications" && unreadCount > 0 && !collapsed && (
-                      <span className="absolute -top-1.5 -right-1.5 h-3.5 w-3.5 bg-red-500 rounded-full text-[8px] text-white font-bold flex items-center justify-center">
-                        {unreadCount > 9 ? "9+" : unreadCount}
-                      </span>
-                    )}
-                    {item.label === "Notifications" && unreadCount > 0 && collapsed && (
-                      <span className="absolute -top-1.5 -right-1.5 h-2.5 w-2.5 bg-red-500 rounded-full" />
-                    )}
-                  </div>
-                  {!collapsed && <span className="truncate">{item.label}</span>}
+                  {item.key === "notifications" && unreadCount > 0 && collapsed && (
+                    <span className="absolute -top-1.5 -right-1.5 h-2.5 w-2.5 bg-red-500 rounded-full" />
+                  )}
                 </div>
-              </Link>
+                {!collapsed && <span className="truncate">{item.label}</span>}
+              </button>
             );
           })}
         </div>
 
-        {/* Profile Section - pinned bottom-left */}
+        {/* Profile Section */}
         <div className="p-3 border-t border-border shrink-0 mt-auto">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -187,11 +205,9 @@ export function DashboardLayout() {
                 </div>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuItem asChild>
-                <Link to="/dashboard/settings" className="w-full cursor-pointer flex items-center gap-2">
-                  <Settings className="h-4 w-4" />
-                  <span>Profile Settings</span>
-                </Link>
+              <DropdownMenuItem onClick={() => setCurrentPage("settings")} className="cursor-pointer flex items-center gap-2">
+                <Settings className="h-4 w-4" />
+                <span>Profile Settings</span>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={logout} className="cursor-pointer text-red-500 flex items-center gap-2 focus:text-red-500 focus:bg-red-500/10">
@@ -208,25 +224,18 @@ export function DashboardLayout() {
         {/* Topbar */}
         <header className="h-16 border-b border-border bg-card/80 backdrop-blur-xl flex items-center px-6 justify-between shrink-0 z-10 sticky top-0 shadow-sm">
           <div className="flex items-center gap-4">
-            {/* Theme Toggle - TOP LEFT */}
             <Button variant="ghost" size="icon" onClick={toggleTheme} className="transition-colors hover:bg-muted rounded-full" title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}>
               {theme === "dark" ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
             </Button>
 
-            {/* Farm Selector */}
             <div className="w-[200px]">
-              <Select
-                value={activeFarmId ? String(activeFarmId) : undefined}
-                onValueChange={(v) => setActiveFarmId(Number(v))}
-              >
+              <Select value={activeFarmId ? String(activeFarmId) : undefined} onValueChange={(v) => setActiveFarmId(Number(v))}>
                 <SelectTrigger className="h-9 bg-muted/50 border-border/50 text-sm">
                   <SelectValue placeholder="Select farm" />
                 </SelectTrigger>
                 <SelectContent>
                   {farms.map((farm) => (
-                    <SelectItem key={farm.farm_id} value={String(farm.farm_id)}>
-                      {farm.name}
-                    </SelectItem>
+                    <SelectItem key={farm.farm_id} value={String(farm.farm_id)}>{farm.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -246,9 +255,7 @@ export function DashboardLayout() {
               <DropdownMenuContent align="end" className="w-48">
                 <DropdownMenuLabel className="text-xs text-muted-foreground">{user?.email || ""}</DropdownMenuLabel>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem asChild>
-                  <Link to="/dashboard/settings" className="cursor-pointer">Settings</Link>
-                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setCurrentPage("settings")} className="cursor-pointer">Settings</DropdownMenuItem>
                 <DropdownMenuItem onClick={logout} className="cursor-pointer text-red-500">Log out</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -257,7 +264,7 @@ export function DashboardLayout() {
 
         {/* Page Content */}
         <main className="flex-1 overflow-y-auto bg-transparent relative w-full pb-8">
-          <Outlet />
+          <PageComponent />
         </main>
       </div>
     </div>
