@@ -159,10 +159,13 @@ services:
       - app_net
 
   # ----------------------------------------------------
-  # App Dashboard (Static)
+  # App Dashboard (Vite + React → nginx)
   # ----------------------------------------------------
   app:
-    image: nginx:1.27-alpine
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+
     container_name: app
     restart: always
 
@@ -173,8 +176,6 @@ services:
       retries: 3
       start_period: 10s
 
-    volumes:
-      - ./app:/usr/share/nginx/html:ro
     networks:
       - app_net
 
