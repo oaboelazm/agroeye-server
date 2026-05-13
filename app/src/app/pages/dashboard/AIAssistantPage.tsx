@@ -41,7 +41,7 @@ function isRTL(text: string): boolean {
   const words = text.split(/\s+/).filter(Boolean);
   if (words.length === 0) return false;
   const arabicCount = words.filter((w) => /[\u0600-\u06FF]/.test(w)).length;
-  return arabicCount / words.length >= 0.8;
+  return arabicCount / words.length >= 0.50;
 }
 
 export function AIAssistantPage() {
