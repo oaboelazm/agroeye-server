@@ -170,6 +170,40 @@ class WebFieldReport(BaseModel):
     irrigation_30d_count: int = 0
 
 
+class WebFieldsByFarmRequest(BaseModel):
+    farm_id: int
+
+
+class WebDevicesByFieldRequest(BaseModel):
+    field_id: int
+
+
+class WebNodeStatusRequest(BaseModel):
+    field_id: int
+
+
+class WebFieldReadingsRequest(BaseModel):
+    field_id: int
+    from_date: str
+    to_date: str
+
+
+class WebScanHistoryRequest(BaseModel):
+    field_id: int
+
+
+class WebUpdateDeviceRequest(BaseModel):
+    device_id: int
+    device_type: Optional[str] = None
+    serial_number: Optional[str] = None
+    location_coords: Optional[str] = None
+    status: Optional[str] = None
+
+
+class WebFieldSummaryRequest(BaseModel):
+    field_id: int
+
+
 class WebAIAssistRequest(BaseModel):
     question: str
     dbSnapshot: Optional[str] = None

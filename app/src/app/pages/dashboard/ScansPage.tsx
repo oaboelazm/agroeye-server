@@ -46,7 +46,7 @@ export function ScansPage() {
     revokeBlobs();
     setImageBlobs({});
     try {
-      const res = await api.scan.history(selectedFieldId);
+      const res = await api.web.scanHistory(selectedFieldId);
       const items = res.history || [];
       setScans(items);
       setAnnotatedImages((prev) => {

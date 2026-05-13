@@ -85,3 +85,14 @@ export interface ScanDetailsResponse {
   image: ScanImage | null;
   analysis: ScanAnalysis | null;
 }
+
+export interface NodeStatusResponse {
+  status: string;
+  summary: {
+    total_nodes: number;
+    active: number;
+    inactive: number;
+    low_battery: number;
+    offline: number;
+  };
+}

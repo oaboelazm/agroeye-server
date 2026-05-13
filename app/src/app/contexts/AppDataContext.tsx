@@ -104,11 +104,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
   const refreshFields = useCallback(async (farmId: number) => {
     try {
-      const res = await api.home.getFields(farmId);
+      const res = await api.web.fieldsByFarm(farmId);
       setFields(res.fields);
 
       const devicesPromises = res.fields.map((f) =>
-        api.home.getDevices(f.field_id).then((d) => d.devices)
+        api.web.devicesByField(f.field_id).then((d) => d.devices)
       );
       const devicesResults = await Promise.all(devicesPromises);
       const allDevices = devicesResults.flat().map((d, i) => ({
@@ -120,7 +120,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       setDevices(allDevices);
 
       const statusPromises = res.fields.map((f) =>
-        api.home.getNodeStatus(f.field_id).then((s) => ({ fieldId: f.field_id, summary: s.summary }))
+        api.web.nodeStatus(f.field_id).then((s) => ({ fieldId: f.field_id, summary: s.summary }))
       );
       const statusResults = await Promise.all(statusPromises);
       const statusMap: Record<number, NodeStatusSummary> = {};
@@ -134,14 +134,22 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const refreshNotifications = useCallback(async () => {
-    if (!user || !activeFarmId) return;
+    if (!activeFarmId) return;
     try {
-      const res = await api.home.getNotifications(user.user_id, activeFarmId);
-      setNotifications(res.notifications);
+      const res = await api.web.notificationsList(activeFarmId);
+      setNotifications(res.notifications.map((n) => ({
+        notification_id: n.notification_id,
+        user_id: 0,
+        farm_id: activeFarmId,
+        type: n.type,
+        message: n.message,
+        is_read: n.is_read,
+        sent_at: n.sent_at || "",
+      })));
     } catch (err) {
       console.error("Failed to fetch notifications:", err);
     }
-  }, [user, activeFarmId]);
+  }, [activeFarmId]);
 
   const refreshDashboard = useCallback(async () => {
     if (!activeFarmId) return;
@@ -158,7 +166,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
   const markNotificationAsRead = useCallback(async (id: number) => {
     try {
-      await api.home.markNotificationRead(id);
+      await api.web.markNotificationRead(id);
       setNotifications((prev) =>
         prev.map((n) => (n.notification_id === id ? { ...n, is_read: 1 } : n))
       );

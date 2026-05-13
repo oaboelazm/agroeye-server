@@ -49,7 +49,7 @@ export function OverviewPage() {
           continue;
         }
         try {
-          const summary = await api.reports.getSummary(field.field_id);
+          const summary = await api.web.fieldSummary(field.field_id);
           cacheRef.current[field.field_id] = summary;
           results[field.field_id] = summary;
         } catch {

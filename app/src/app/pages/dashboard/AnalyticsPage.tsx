@@ -23,7 +23,7 @@ export function AnalyticsPage() {
         const toDate = new Date().toISOString().split("T")[0];
         const results = await Promise.all(
           fields.slice(0, 3).map((f) =>
-            api.reports.getReadings(f.field_id, fromDate, toDate).catch(() => ({ readings: [] }))
+            api.web.fieldReadings(f.field_id, fromDate, toDate).catch(() => ({ readings: [] }))
           )
         );
         const all = results.flatMap((r) => r.readings);

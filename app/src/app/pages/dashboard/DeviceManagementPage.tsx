@@ -19,7 +19,7 @@ export function DeviceManagementPage() {
     if (!targetFieldId) return;
     setReassigning((prev) => ({ ...prev, [deviceId]: true }));
     try {
-      await api.manage.updateDevice({
+      await api.web.updateDevice({
         device_id: deviceId,
         status: "online",
       });

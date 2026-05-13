@@ -3062,5 +3062,298 @@ def web_farms_archived_list(
     return {"farms": [dict(r) for r in rows]}
 
 
+# ── Webapp Fields by Farm (matches mobile /mobile/home/get-fields shape) ──
+
+
+@webapp_router.post("/fields/by-farm")
+def web_fields_by_farm(
+    data: web_schemas.WebFieldsByFarmRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    farm_ids = _get_farm_ids_for_user(uid, db)
+    if data.farm_id not in farm_ids:
+        raise HTTPException(status_code=403, detail="Farm not accessible")
+    rows = db.execute(
+        text("SELECT field_id, name, crop_type, area_size FROM Fields WHERE farm_id = :fid"),
+        {"fid": data.farm_id},
+    ).mappings().all()
+    return {"fields": [dict(r) for r in rows]}
+
+
+# ── Webapp Devices by Field (matches mobile /mobile/home/get-devices shape) ──
+
+
+@webapp_router.post("/devices/by-field")
+def web_devices_by_field(
+    data: web_schemas.WebDevicesByFieldRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    field_ids = _get_field_ids_for_farms(_get_farm_ids_for_user(uid, db), db)
+    if data.field_id not in field_ids:
+        raise HTTPException(status_code=403, detail="Field not accessible")
+    rows = db.execute(
+        text("""
+            SELECT device_id, device_type, serial_number, location_coords, status
+            FROM Devices WHERE field_id = :fid
+        """),
+        {"fid": data.field_id},
+    ).mappings().all()
+    return {"devices": [dict(r) for r in rows]}
+
+
+# ── Webapp Node Status (matches mobile /mobile/home/get-node-status shape) ──
+
+
+@webapp_router.post("/devices/node-status")
+def web_node_status(
+    data: web_schemas.WebNodeStatusRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    field_ids = _get_field_ids_for_farms(_get_farm_ids_for_user(uid, db), db)
+    if data.field_id not in field_ids:
+        raise HTTPException(status_code=403, detail="Field not accessible")
+
+    devices = db.execute(
+        text("SELECT device_id FROM Devices WHERE field_id = :fid"),
+        {"fid": data.field_id},
+    ).mappings().all()
+
+    if not devices:
+        return {"status": "success", "summary": {"total_nodes": 0, "active": 0, "inactive": 0, "low_battery": 0, "offline": 0}}
+
+    device_ids = [d["device_id"] for d in devices]
+    id_placeholders = ", ".join([f":did_{i}" for i in range(len(device_ids))])
+    id_params = {f"did_{i}": did for i, did in enumerate(device_ids)}
+
+    rows = db.execute(
+        text(f"""
+            SELECT status, COUNT(*) as count
+            FROM SensingNodes
+            WHERE device_id IN ({id_placeholders})
+            GROUP BY status
+        """),
+        id_params,
+    ).mappings().all()
+
+    low_battery = db.execute(
+        text(f"""
+            SELECT COUNT(*) as count
+            FROM SensingNodes
+            WHERE device_id IN ({id_placeholders}) AND battery_level < 20
+        """),
+        id_params,
+    ).mappings().first()
+
+    result = {"total_nodes": 0, "active": 0, "inactive": 0, "low_battery": 0, "offline": 0}
+    for r in rows:
+        status = r["status"]
+        count = r["count"]
+        result["total_nodes"] += count
+        if status in result:
+            result[status] = count
+    result["low_battery"] = low_battery["count"] if low_battery else 0
+
+    return {"status": "success", "summary": result}
+
+
+# ── Webapp Field Readings (matches mobile /mobile/reports/get-readings shape) ──
+
+
+@webapp_router.post("/reports/field-readings")
+def web_field_readings(
+    data: web_schemas.WebFieldReadingsRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    field_ids = _get_field_ids_for_farms(_get_farm_ids_for_user(uid, db), db)
+    if data.field_id not in field_ids:
+        raise HTTPException(status_code=403, detail="Field not accessible")
+
+    devices = db.execute(
+        text("SELECT device_id FROM Devices WHERE field_id = :fid"),
+        {"fid": data.field_id},
+    ).mappings().all()
+
+    if not devices:
+        return {"readings": []}
+
+    device_ids = [d["device_id"] for d in devices]
+    id_placeholders = ", ".join([f":did_{i}" for i in range(len(device_ids))])
+    id_params = {f"did_{i}": did for i, did in enumerate(device_ids)}
+    id_params["start"] = data.from_date
+    id_params["end"] = data.to_date
+
+    rows = db.execute(
+        text(f"""
+            SELECT *
+            FROM SensorReadings
+            WHERE device_id IN ({id_placeholders})
+            AND timestamp BETWEEN :start AND :end
+            ORDER BY timestamp ASC
+        """),
+        id_params,
+    ).mappings().all()
+
+    return {"readings": [dict(r) for r in rows]}
+
+
+# ── Webapp Field Summary (matches mobile /mobile/reports/get-summary shape) ──
+
+
+@webapp_router.post("/reports/field-summary")
+def web_field_summary(
+    data: web_schemas.WebFieldSummaryRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    field_ids = _get_field_ids_for_farms(_get_farm_ids_for_user(uid, db), db)
+    if data.field_id not in field_ids:
+        raise HTTPException(status_code=403, detail="Field not accessible")
+
+    devices = db.execute(
+        text("SELECT device_id FROM Devices WHERE field_id = :fid"),
+        {"fid": data.field_id},
+    ).mappings().all()
+
+    if not devices:
+        return {"devices_count": 0, "latest_reading": None, "averages": {}, "irrigation_summary": {}}
+
+    device_ids = [d["device_id"] for d in devices]
+    id_placeholders = ", ".join([f":did_{i}" for i in range(len(device_ids))])
+    id_params = {f"did_{i}": did for i, did in enumerate(device_ids)}
+
+    avg_data = db.execute(
+        text(f"""
+            SELECT
+                AVG(temperature_air) AS avg_air_temp,
+                AVG(humidity_air) AS avg_air_humidity,
+                AVG(temperature_soil) AS avg_soil_temp,
+                AVG(humidity_soil) AS avg_soil_humidity,
+                AVG(soil_moisture) AS avg_soil_moist,
+                AVG(soil_ph) AS avg_soil_ph,
+                AVG(nitrogen) AS avg_nitrogen,
+                AVG(phosphorus) AS avg_phosphorus,
+                AVG(potassium) AS avg_potassium,
+                AVG(conductivity) AS avg_conductivity,
+                AVG(light_intensity) AS avg_light,
+                AVG(co2) AS avg_co2
+            FROM SensorReadings
+            WHERE device_id IN ({id_placeholders})
+        """),
+        id_params,
+    ).mappings().first()
+
+    latest_reading = db.execute(
+        text(f"""
+            SELECT device_id, timestamp, temperature_air, humidity_air, temperature_soil,
+                   humidity_soil, soil_moisture, soil_ph, nitrogen, phosphorus, potassium,
+                   conductivity, light_intensity, co2
+            FROM SensorReadings
+            WHERE device_id IN ({id_placeholders})
+            ORDER BY timestamp DESC LIMIT 1
+        """),
+        id_params,
+    ).mappings().first()
+
+    last_irrigation = db.execute(
+        text("""
+            SELECT
+                event_id AS irrigation_id,
+                field_id,
+                created_at AS start_time,
+                executed_at AS end_time,
+                duration_minutes,
+                CASE WHEN is_executed = 1 THEN 'completed' ELSE 'scheduled' END AS status
+            FROM Events
+            WHERE field_id = :fid
+            ORDER BY created_at DESC LIMIT 1
+        """),
+        {"fid": data.field_id},
+    ).mappings().first()
+
+    irrigation30 = db.execute(
+        text("""
+            SELECT COUNT(*) AS events_count
+            FROM Events
+            WHERE field_id = :fid AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+        """),
+        {"fid": data.field_id},
+    ).mappings().first()
+
+    return {
+        "devices_count": len(devices),
+        "latest_reading": dict(latest_reading) if latest_reading else None,
+        "averages": dict(avg_data) if avg_data else {},
+        "irrigation_summary": {
+            "last_event": dict(last_irrigation) if last_irrigation else None,
+            "events_last_30_days": irrigation30["events_count"] if irrigation30 else 0,
+        },
+    }
+
+
+# ── Webapp Scan History (matches mobile /mobile/scan/history shape) ──
+
+
+@webapp_router.post("/scans/history")
+def web_scan_history(
+    data: web_schemas.WebScanHistoryRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    field_ids = _get_field_ids_for_farms(_get_farm_ids_for_user(uid, db), db)
+    if data.field_id not in field_ids:
+        raise HTTPException(status_code=403, detail="Field not accessible")
+    rows = db.execute(
+        text("""
+            SELECT i.*, r.*
+            FROM Images i
+            LEFT JOIN AIResults r ON i.image_id = r.image_id
+            WHERE i.field_id = :fid
+            ORDER BY i.capture_timestamp DESC
+        """),
+        {"fid": data.field_id},
+    ).mappings().all()
+    return {"history": [dict(r) for r in rows]}
+
+
+# ── Webapp Update Device (matches mobile /mobile/manage/update-device shape) ──
+
+
+@webapp_router.post("/manage/update-device")
+def web_update_device(
+    data: web_schemas.WebUpdateDeviceRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    device = db.execute(
+        text("""
+            SELECT d.device_id FROM Devices d
+            JOIN Fields f ON d.field_id = f.field_id
+            JOIN Farms fa ON f.farm_id = fa.farm_id
+            WHERE d.device_id = :did AND fa.user_id = :uid
+        """),
+        {"did": data.device_id, "uid": uid},
+    ).mappings().first()
+    if not device:
+        raise HTTPException(status_code=403, detail="Device not accessible")
+
+    fields = {k: v for k, v in data.model_dump().items() if v is not None and k != "device_id"}
+    if not fields:
+        return {"status": "error", "message": "No fields provided"}
+
+    set_clause = ", ".join(f"{k} = :{k}" for k in fields.keys())
+    fields["device_id"] = data.device_id
+
+    db.execute(
+        text(f"UPDATE Devices SET {set_clause} WHERE device_id = :device_id"),
+        fields,
+    )
+    db.commit()
+    return {"status": "success", "message": "Device updated"}
+
+
 app.include_router(webapp_router)
 

@@ -1,4 +1,4 @@
-import type { Farm, ScanHistoryResponse, ScanDetailsResponse, ChatSession, ChatSessionMessage } from "../types/api";
+import type { Farm, ScanHistoryResponse, ScanDetailsResponse, ChatSession, ChatSessionMessage, NodeStatusResponse } from "../types/api";
 
 const BASE_URL = "/api";
 
@@ -174,7 +174,7 @@ export const api = {
       }),
 
     getIrrigation: (fieldId: number) =>
-      request<{ events: Array<Record<string, unknown>> }>("/mobile/reports/get-irrigation", {
+      request<{ irrigation_events: Array<Record<string, unknown>> }>("/mobile/reports/get-irrigation", {
         field_id: fieldId,
       }),
 
@@ -550,5 +550,39 @@ export const api = {
       request<{
         readings: Array<Record<string, unknown>>;
       }>("/webapp/sensors/latest", { device_id: deviceId, farm_id: farmId }),
+
+    fieldsByFarm: (farmId: number) =>
+      request<{
+        fields: Array<{ field_id: number; name: string; crop_type: string; area_size: number }>;
+      }>("/webapp/fields/by-farm", { farm_id: farmId }),
+
+    devicesByField: (fieldId: number) =>
+      request<{
+        devices: Array<{ device_id: number; device_type: string; serial_number: string; location_coords: string | null; status: string }>;
+      }>("/webapp/devices/by-field", { field_id: fieldId }),
+
+    nodeStatus: (fieldId: number) =>
+      request<NodeStatusResponse>("/webapp/devices/node-status", { field_id: fieldId }),
+
+    fieldReadings: (fieldId: number, fromDate: string, toDate: string) =>
+      request<{ readings: Array<Record<string, unknown>> }>("/webapp/reports/field-readings", {
+        field_id: fieldId,
+        from_date: fromDate,
+        to_date: toDate,
+      }),
+
+    fieldSummary: (fieldId: number) =>
+      request<{
+        devices_count: number;
+        latest_reading: Record<string, unknown> | null;
+        averages: Record<string, unknown>;
+        irrigation_summary: { last_event: Record<string, unknown> | null; events_last_30_days: number };
+      }>("/webapp/reports/field-summary", { field_id: fieldId }),
+
+    scanHistory: (fieldId: number) =>
+      request<ScanHistoryResponse>("/webapp/scans/history", { field_id: fieldId }),
+
+    updateDevice: (data: { device_id: number; device_type?: string; serial_number?: string; location_coords?: string; status?: string }) =>
+      request<{ status: string; message: string }>("/webapp/manage/update-device", data),
   },
 };
