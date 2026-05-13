@@ -13,7 +13,7 @@ import { ScrollArea } from "../../components/ui/scroll-area";
 import { useAppData } from "../../contexts/AppDataContext";
 import { api } from "../../lib/api";
 import type { ScanHistoryItem } from "../../types/api";
-import { ScanLine, AlertCircle, Leaf, RotateCcw, ImageIcon, Calendar, FileText, Maximize2, X, ZoomIn } from "lucide-react";
+import { ScanLine, AlertCircle, Leaf, RotateCcw, ImageIcon, Calendar, FileText, Maximize2, X, ZoomIn, ShieldCheck, AlertTriangle, FlaskConical, HardDrive, Cpu } from "lucide-react";
 
 export function ScansPage() {
   const { fields } = useAppData();
@@ -224,118 +224,197 @@ export function ScansPage() {
       )}
 
       <Dialog open={!!detailScan} onOpenChange={(o) => !o && setDetailScan(null)}>
-        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="!max-w-[92vw] max-h-[92vh] p-0 gap-0">
           {detailScan && (
-            <>
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2">
-                  <ScanLine className="h-4 w-4 text-emerald-500" />
-                  Scan {detailScan.image_id.slice(0, 8)}...
-                </DialogTitle>
-                <DialogDescription>
-                  {new Date(detailScan.capture_timestamp).toLocaleString()}
-                  {detailScan.file_size ? ` · ${(detailScan.file_size / 1024).toFixed(1)} KB` : ""}
-                </DialogDescription>
-              </DialogHeader>
-
-              <div className="grid md:grid-cols-2 gap-6">
-                <div className="space-y-4">
-                  <div
-                    className="rounded-lg overflow-hidden border border-border/50 bg-muted/20 cursor-pointer relative group"
-                    onClick={() => imageBlobs[detailScan.image_id] && setZoomedImage(imageBlobs[detailScan.image_id])}
-                  >
-                    {imageBlobs[detailScan.image_id] ? (
-                      <>
-                        <img
-                          src={imageBlobs[detailScan.image_id]}
-                          alt={`Scan ${detailScan.image_id.slice(0, 8)}`}
-                          className="w-full h-auto object-cover"
-                        />
-                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
-                          <div className="p-2 bg-background/80 backdrop-blur-sm rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
-                            <ZoomIn className="h-5 w-5" />
-                          </div>
-                        </div>
-                      </>
-                    ) : (
-                      <div className="w-full h-48 flex items-center justify-center text-muted-foreground">
-                        <ImageIcon className="h-8 w-8" />
-                      </div>
-                    )}
+            <div className="flex flex-col h-[92vh]">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-border/50 shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-emerald-500/10 rounded-lg">
+                    <ScanLine className="h-5 w-5 text-emerald-500" />
                   </div>
-
-                  {annotatedImages[detailScan.image_id] && (
-                    <div>
-                      <p className="text-xs font-medium text-muted-foreground mb-2">Annotated result:</p>
-                      <div
-                        className="rounded-lg overflow-hidden border border-border/50 bg-muted/20 cursor-pointer relative group"
-                        onClick={() => setZoomedImage(annotatedImages[detailScan.image_id]!)}
-                      >
-                        <img
-                          src={annotatedImages[detailScan.image_id]}
-                          alt="Annotated scan"
-                          className="w-full h-auto"
-                        />
-                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
-                          <div className="p-2 bg-background/80 backdrop-blur-sm rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
-                            <ZoomIn className="h-5 w-5" />
-                          </div>
-                        </div>
-                      </div>
-                    </div>
+                  <div>
+                    <h2 className="text-lg font-semibold">Scan {detailScan.image_id.slice(0, 8)}...</h2>
+                    <p className="text-sm text-muted-foreground">
+                      {new Date(detailScan.capture_timestamp).toLocaleString()}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                  {detailScan.file_size && (
+                    <span className="flex items-center gap-1">
+                      <HardDrive className="h-3.5 w-3.5" />
+                      {(detailScan.file_size / 1024).toFixed(1)} KB
+                    </span>
                   )}
                 </div>
+              </div>
 
-                <div className="space-y-4">
-                  {detailScan.disease_detected ? (
-                    <div className="space-y-3">
-                      <div className="flex items-center gap-2">
-                        <Badge
-                          variant={isHealthy(detailScan.disease_detected) ? "secondary" : "destructive"}
-                          className="text-sm px-3 py-1"
-                        >
-                          {detailScan.disease_detected}
-                        </Badge>
-                      </div>
-                      <div className="flex items-center gap-2 text-sm">
-                        <span className="text-muted-foreground">Confidence:</span>
-                        <span className={`font-medium text-base ${confidenceColor(detailScan.confidence_score)}`}>
-                          {detailScan.confidence_score != null
-                            ? `${(detailScan.confidence_score * 100).toFixed(1)}%`
-                            : "N/A"}
-                        </span>
-                      </div>
-                      {detailScan.recommendation && (
-                        <div>
-                          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">
-                            <FileText className="h-3 w-3 inline mr-1" />
-                            Recommendation
-                          </p>
-                          <p className="text-sm text-muted-foreground leading-relaxed">
-                            {detailScan.recommendation}
-                          </p>
+              <div className="flex flex-1 min-h-0">
+                <div className="flex-1 p-4 bg-muted/20 overflow-y-auto">
+                  <div className="h-full flex flex-col gap-4">
+                    <div
+                      className="rounded-xl overflow-hidden border border-border/50 bg-background cursor-pointer relative group flex-1 min-h-0 flex items-center justify-center"
+                      onClick={() => imageBlobs[detailScan.image_id] && setZoomedImage(imageBlobs[detailScan.image_id])}
+                    >
+                      {imageBlobs[detailScan.image_id] ? (
+                        <>
+                          <img
+                            src={imageBlobs[detailScan.image_id]}
+                            alt={`Scan ${detailScan.image_id.slice(0, 8)}`}
+                            className="max-w-full max-h-full object-contain"
+                          />
+                          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-end justify-end p-4">
+                            <div className="p-2 bg-background/80 backdrop-blur-sm rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-lg">
+                              <ZoomIn className="h-5 w-5" />
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                          <ImageIcon className="h-12 w-12" />
+                          <span className="text-sm">Image not available</span>
                         </div>
                       )}
                     </div>
-                  ) : (
-                    <div className="text-sm text-muted-foreground italic py-4">Analysis pending</div>
-                  )}
 
-                  <div className="pt-4 border-t border-border/50">
+                    {annotatedImages[detailScan.image_id] && (
+                      <div>
+                        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2 flex items-center gap-1">
+                          <FlaskConical className="h-3 w-3" />
+                          AI Annotated Result
+                        </p>
+                        <div
+                          className="rounded-xl overflow-hidden border border-border/50 bg-background cursor-pointer relative group"
+                          onClick={() => setZoomedImage(annotatedImages[detailScan.image_id]!)}
+                        >
+                          <img
+                            src={annotatedImages[detailScan.image_id]}
+                            alt="Annotated scan"
+                            className="w-full h-auto"
+                          />
+                          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-end justify-end p-4">
+                            <div className="p-2 bg-background/80 backdrop-blur-sm rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-lg">
+                              <ZoomIn className="h-5 w-5" />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="w-[380px] shrink-0 border-l border-border/50 flex flex-col bg-card/30">
+                  <div className="flex-1 overflow-y-auto p-5 space-y-5">
+                    {detailScan.disease_detected ? (
+                      <>
+                        <div className="rounded-xl border border-border/50 bg-card p-4 space-y-3">
+                          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+                            {isHealthy(detailScan.disease_detected) ? (
+                              <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" />
+                            ) : (
+                              <AlertTriangle className="h-3.5 w-3.5 text-red-500" />
+                            )}
+                            Diagnosis
+                          </p>
+                          <div className="flex items-center gap-3">
+                            <Badge
+                              variant={isHealthy(detailScan.disease_detected) ? "secondary" : "destructive"}
+                              className="text-sm px-3 py-1"
+                            >
+                              {detailScan.disease_detected}
+                            </Badge>
+                          </div>
+                        </div>
+
+                        <div className="rounded-xl border border-border/50 bg-card p-4 space-y-3">
+                          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+                            <ShieldCheck className="h-3.5 w-3.5" />
+                            Confidence
+                          </p>
+                          <div className="flex items-center gap-3">
+                            <div className="flex-1 bg-muted rounded-full h-2.5 overflow-hidden">
+                              <div
+                                className={`h-full rounded-full transition-all ${
+                                  detailScan.confidence_score != null
+                                    ? detailScan.confidence_score >= 0.8
+                                      ? "bg-emerald-500"
+                                      : detailScan.confidence_score >= 0.5
+                                        ? "bg-yellow-500"
+                                        : "bg-red-500"
+                                    : "bg-muted-foreground/20"
+                                }`}
+                                style={{ width: detailScan.confidence_score != null ? `${detailScan.confidence_score * 100}%` : "0%" }}
+                              />
+                            </div>
+                            <span className={`font-semibold text-lg shrink-0 ${confidenceColor(detailScan.confidence_score)}`}>
+                              {detailScan.confidence_score != null
+                                ? `${(detailScan.confidence_score * 100).toFixed(1)}%`
+                                : "N/A"}
+                            </span>
+                          </div>
+                        </div>
+
+                        {detailScan.recommendation && (
+                          <div className="rounded-xl border border-border/50 bg-card p-4 space-y-3">
+                            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+                              <FileText className="h-3.5 w-3.5" />
+                              Recommendation
+                            </p>
+                            <p className="text-sm text-foreground/80 leading-relaxed">
+                              {detailScan.recommendation}
+                            </p>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div className="rounded-xl border border-border/50 bg-card p-8 text-center space-y-2">
+                        <ScanLine className="h-8 w-8 mx-auto text-muted-foreground/50" />
+                        <p className="text-sm text-muted-foreground">Analysis pending</p>
+                        <p className="text-xs text-muted-foreground/60">Run a rescan to get AI-powered disease detection</p>
+                      </div>
+                    )}
+
+                    <div className="rounded-xl border border-border/50 bg-card p-4 space-y-2.5">
+                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Details</p>
+                      <div className="space-y-1.5 text-sm">
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Image ID</span>
+                          <span className="font-mono text-xs">{detailScan.image_id.slice(0, 16)}...</span>
+                        </div>
+                        {detailScan.file_size && (
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">File Size</span>
+                            <span>{(detailScan.file_size / 1024).toFixed(1)} KB</span>
+                          </div>
+                        )}
+                        {detailScan.device_id && (
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Device</span>
+                            <span>#{detailScan.device_id}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="p-5 border-t border-border/50 shrink-0">
                     <Button
-                      variant="outline"
-                      size="sm"
+                      variant="default"
+                      size="lg"
                       onClick={() => handleRescan(detailScan)}
                       disabled={rescanningId === detailScan.image_id}
-                      className="gap-2"
+                      className="w-full gap-2 h-11 text-base"
                     >
-                      <RotateCcw className={`h-3.5 w-3.5 ${rescanningId === detailScan.image_id ? "animate-spin" : ""}`} />
-                      {rescanningId === detailScan.image_id ? "Rescanning..." : "Rescan"}
+                      <RotateCcw className={`h-4 w-4 ${rescanningId === detailScan.image_id ? "animate-spin" : ""}`} />
+                      {rescanningId === detailScan.image_id ? "Rescanning..." : "Rescan with AI"}
                     </Button>
+                    <p className="text-[10px] text-muted-foreground/50 text-center mt-2">
+                      Click images to view full size
+                    </p>
                   </div>
                 </div>
               </div>
-            </>
+            </div>
           )}
         </DialogContent>
       </Dialog>

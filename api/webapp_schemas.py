@@ -204,6 +204,37 @@ class WebFieldSummaryRequest(BaseModel):
     field_id: int
 
 
+class WebFarmCreateRequest(BaseModel):
+    name: str
+    location: str
+    area_size: float
+
+
+class WebFarmUpdateRequest(BaseModel):
+    farm_id: int
+    name: str
+    location: str
+    area_size: float
+
+
+class WebFieldCreateRequest(BaseModel):
+    farm_id: int
+    name: str
+    crop_type: str
+    area_size: float
+
+
+class WebFieldUpdateRequest(BaseModel):
+    field_id: int
+    name: str
+    crop_type: str
+    area_size: float
+
+
+class WebFieldDeleteRequest(BaseModel):
+    field_id: int
+
+
 class WebAIAssistRequest(BaseModel):
     question: str
     dbSnapshot: Optional[str] = None

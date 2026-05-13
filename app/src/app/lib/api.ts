@@ -584,5 +584,20 @@ export const api = {
 
     updateDevice: (data: { device_id: number; device_type?: string; serial_number?: string; location_coords?: string; status?: string }) =>
       request<{ status: string; message: string }>("/webapp/manage/update-device", data),
+
+    createFarm: (data: { name: string; location: string; area_size: number }) =>
+      request<{ status: string; message: string }>("/webapp/farms/create", data),
+
+    updateFarm: (data: { farm_id: number; name: string; location: string; area_size: number }) =>
+      request<{ status: string; message: string }>("/webapp/farms/update", data),
+
+    createField: (data: { farm_id: number; name: string; crop_type: string; area_size: number }) =>
+      request<{ status: string; message: string }>("/webapp/fields/create", data),
+
+    updateField: (data: { field_id: number; name: string; crop_type: string; area_size: number }) =>
+      request<{ status: string; message: string }>("/webapp/fields/update", data),
+
+    deleteField: (fieldId: number) =>
+      request<{ status: string; message: string }>("/webapp/fields/delete", { field_id: fieldId }),
   },
 };

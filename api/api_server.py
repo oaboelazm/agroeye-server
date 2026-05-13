@@ -332,7 +332,7 @@ def login_user(data: LoginRequest, db: Session = Depends(get_db)):
 @app.post("/mobile/home/get-farms")
 def get_farms(data: UserFarmsRequest, db: Session = Depends(get_db)):
     rows = db.execute(
-        text("SELECT farm_id, name, location, area_size FROM Farms WHERE user_id = :uid"),
+        text("SELECT farm_id, name, location, area_size FROM Farms WHERE user_id = :uid AND deleted_at IS NULL"),
         {"uid": data.user_id}
     ).mappings().all()
     return {"farms": [dict(r) for r in rows]}
@@ -341,7 +341,7 @@ def get_farms(data: UserFarmsRequest, db: Session = Depends(get_db)):
 @app.post("/mobile/home/get-fields")
 def get_fields(data: FarmFieldsRequest, db: Session = Depends(get_db)):
     rows = db.execute(
-        text("SELECT field_id, name, crop_type, area_size FROM Fields WHERE farm_id = :fid"),
+        text("SELECT field_id, name, crop_type, area_size FROM Fields WHERE farm_id = :fid AND deleted_at IS NULL"),
         {"fid": data.farm_id}
     ).mappings().all()
     return {"fields": [dict(r) for r in rows]}
@@ -759,7 +759,7 @@ def update_farm(data: UpdateFarmRequest, db: Session = Depends(get_db)):
         text("""
             UPDATE Farms
             SET name = :name, location = :location, area_size = :area
-            WHERE farm_id = :fid
+            WHERE farm_id = :fid AND deleted_at IS NULL
         """),
         {
             "fid": data.farm_id,
@@ -779,7 +779,7 @@ def update_farm(data: UpdateFarmRequest, db: Session = Depends(get_db)):
 @app.post("/mobile/manage/delete-farm")
 def delete_farm(data: DeleteFarmRequest, db: Session = Depends(get_db)):
     db.execute(
-        text("DELETE FROM Farms WHERE farm_id = :fid"),
+        text("UPDATE Farms SET deleted_at = NOW() WHERE farm_id = :fid"),
         {"fid": data.farm_id}
     )
     db.commit()
@@ -810,7 +810,7 @@ def update_field(data: UpdateFieldRequest, db: Session = Depends(get_db)):
         text("""
             UPDATE Fields
             SET name = :name, crop_type = :crop, area_size = :area
-            WHERE field_id = :fid
+            WHERE field_id = :fid AND deleted_at IS NULL
         """),
         {
             "fid": data.field_id,
@@ -830,7 +830,7 @@ def update_field(data: UpdateFieldRequest, db: Session = Depends(get_db)):
 @app.post("/mobile/manage/delete-field")
 def delete_field(data: DeleteFieldRequest, db: Session = Depends(get_db)):
     db.execute(
-        text("DELETE FROM Fields WHERE field_id = :fid"),
+        text("UPDATE Fields SET deleted_at = NOW() WHERE field_id = :fid"),
         {"fid": data.field_id}
     )
     db.commit()
@@ -1614,7 +1614,7 @@ def _get_field_ids_for_farms(farm_ids: list[int], db: Session) -> list[int]:
     placeholders = ", ".join([f":fid_{i}" for i in range(len(farm_ids))])
     params = {f"fid_{i}": fid for i, fid in enumerate(farm_ids)}
     rows = db.execute(
-        text(f"SELECT field_id FROM Fields WHERE farm_id IN ({placeholders})"),
+        text(f"SELECT field_id FROM Fields WHERE farm_id IN ({placeholders}) AND deleted_at IS NULL"),
         params
     ).mappings().all()
     return [r["field_id"] for r in rows]
@@ -1747,7 +1747,7 @@ def web_fields_list(
         raise HTTPException(status_code=403, detail="Farm not accessible")
 
     rows = db.execute(
-        text("SELECT field_id, name, crop_type, area_size FROM Fields WHERE farm_id = :fid"),
+        text("SELECT field_id, name, crop_type, area_size FROM Fields WHERE farm_id = :fid AND deleted_at IS NULL"),
         {"fid": data.farm_id}
     ).mappings().all()
 
@@ -1778,7 +1778,7 @@ def web_field_overview(
             SELECT f.field_id, f.name, f.crop_type, f.area_size, f.farm_id
             FROM Fields f
             JOIN Farms fa ON f.farm_id = fa.farm_id
-            WHERE f.field_id = :fid AND fa.user_id = :uid
+            WHERE f.field_id = :fid AND fa.user_id = :uid AND f.deleted_at IS NULL
         """),
         {"fid": data.field_id, "uid": uid}
     ).mappings().first()
@@ -2249,7 +2249,7 @@ def web_report_field(
             SELECT f.field_id, f.name
             FROM Fields f
             JOIN Farms fa ON f.farm_id = fa.farm_id
-            WHERE f.field_id = :fid AND fa.user_id = :uid
+            WHERE f.field_id = :fid AND fa.user_id = :uid AND f.deleted_at IS NULL
         """),
         {"fid": data.field_id, "uid": uid}
     ).mappings().first()
@@ -3075,7 +3075,7 @@ def web_fields_by_farm(
     if data.farm_id not in farm_ids:
         raise HTTPException(status_code=403, detail="Farm not accessible")
     rows = db.execute(
-        text("SELECT field_id, name, crop_type, area_size FROM Fields WHERE farm_id = :fid"),
+        text("SELECT field_id, name, crop_type, area_size FROM Fields WHERE farm_id = :fid AND deleted_at IS NULL"),
         {"fid": data.farm_id},
     ).mappings().all()
     return {"fields": [dict(r) for r in rows]}
@@ -3353,6 +3353,141 @@ def web_update_device(
     )
     db.commit()
     return {"status": "success", "message": "Device updated"}
+
+
+# ── Webapp Create Farm ──
+
+
+@webapp_router.post("/farms/create")
+def web_farm_create(
+    data: web_schemas.WebFarmCreateRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    db.execute(
+        text("""
+            INSERT INTO Farms (user_id, name, location, area_size)
+            VALUES (:uid, :name, :location, :area)
+        """),
+        {"uid": uid, "name": data.name, "location": data.location, "area": data.area_size},
+    )
+    db.commit()
+    return {"status": "success", "message": "Farm created"}
+
+
+# ── Webapp Update Farm ──
+
+
+@webapp_router.post("/farms/update")
+def web_farm_update(
+    data: web_schemas.WebFarmUpdateRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    farm_ids = _get_farm_ids_for_user(uid, db)
+    if data.farm_id not in farm_ids:
+        raise HTTPException(status_code=403, detail="Farm not accessible")
+
+    result = db.execute(
+        text("""
+            UPDATE Farms SET name = :name, location = :location, area_size = :area
+            WHERE farm_id = :fid
+        """),
+        {"fid": data.farm_id, "name": data.name, "location": data.location, "area": data.area_size},
+    )
+    db.commit()
+
+    if result.rowcount == 0:
+        return {"status": "error", "message": "Farm not found"}
+
+    return {"status": "success", "message": "Farm updated"}
+
+
+# ── Webapp Create Field ──
+
+
+@webapp_router.post("/fields/create")
+def web_field_create(
+    data: web_schemas.WebFieldCreateRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    farm_ids = _get_farm_ids_for_user(uid, db)
+    if data.farm_id not in farm_ids:
+        raise HTTPException(status_code=403, detail="Farm not accessible")
+
+    db.execute(
+        text("""
+            INSERT INTO Fields (farm_id, name, crop_type, area_size)
+            VALUES (:fid, :name, :crop, :area)
+        """),
+        {"fid": data.farm_id, "name": data.name, "crop": data.crop_type, "area": data.area_size},
+    )
+    db.commit()
+    return {"status": "success", "message": "Field created"}
+
+
+# ── Webapp Update Field ──
+
+
+@webapp_router.post("/fields/update")
+def web_field_update(
+    data: web_schemas.WebFieldUpdateRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    field = db.execute(
+        text("""
+            SELECT f.field_id FROM Fields f
+            JOIN Farms fa ON f.farm_id = fa.farm_id
+            WHERE f.field_id = :fid AND fa.user_id = :uid AND f.deleted_at IS NULL
+        """),
+        {"fid": data.field_id, "uid": uid},
+    ).mappings().first()
+    if not field:
+        raise HTTPException(status_code=403, detail="Field not accessible")
+
+    result = db.execute(
+        text("""
+            UPDATE Fields SET name = :name, crop_type = :crop, area_size = :area
+            WHERE field_id = :fid
+        """),
+        {"fid": data.field_id, "name": data.name, "crop": data.crop_type, "area": data.area_size},
+    )
+    db.commit()
+
+    if result.rowcount == 0:
+        return {"status": "error", "message": "Field not found"}
+
+    return {"status": "success", "message": "Field updated"}
+
+
+# ── Webapp Delete Field ──
+
+
+@webapp_router.post("/fields/delete")
+def web_field_delete(
+    data: web_schemas.WebFieldDeleteRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    field = db.execute(
+        text("""
+            SELECT f.field_id FROM Fields f
+            JOIN Farms fa ON f.farm_id = fa.farm_id
+            WHERE f.field_id = :fid AND fa.user_id = :uid AND f.deleted_at IS NULL
+        """),
+        {"fid": data.field_id, "uid": uid},
+    ).mappings().first()
+    if not field:
+        raise HTTPException(status_code=403, detail="Field not accessible")
+
+    db.execute(
+        text("UPDATE Fields SET deleted_at = NOW() WHERE field_id = :fid"),
+        {"fid": data.field_id},
+    )
+    db.commit()
+    return {"status": "success", "message": "Field deleted"}
 
 
 app.include_router(webapp_router)
