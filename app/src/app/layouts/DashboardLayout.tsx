@@ -266,9 +266,9 @@ export function DashboardLayout() {
         </header>
 
         {/* Page Content */}
-        <ScrollArea className="flex-1 pb-8">
+        <main className="flex-1 overflow-y-auto pb-8 custom-scrollbar">
           <PageComponent />
-        </ScrollArea>
+        </main>
       </div>
     </div>
   );
