@@ -1,6 +1,8 @@
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
+import rehypeSanitize from "rehype-sanitize";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { ScrollArea } from "../../components/ui/scroll-area";
@@ -36,7 +38,10 @@ function cleanContent(text: string): string {
 }
 
 function isRTL(text: string): boolean {
-  return /[\u0600-\u06FF]/.test(text);
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length === 0) return false;
+  const arabicCount = words.filter((w) => /[\u0600-\u06FF]/.test(w)).length;
+  return arabicCount / words.length >= 0.8;
 }
 
 export function AIAssistantPage() {
@@ -311,9 +316,9 @@ export function AIAssistantPage() {
                     )}
                     <div className="flex flex-col gap-1 max-w-[80%]">
                       {msg.role === "ai" ? (
-                        <div className="px-4 py-3 rounded-2xl text-sm bg-card border border-border/50 shadow-sm rounded-tl-sm leading-relaxed text-foreground prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-headings:my-2 prose-pre:my-2 prose-code:px-1 prose-code:py-0.5 prose-code:bg-muted prose-code:rounded prose-code:text-xs" dir={isRTL(msg.content) ? "rtl" : undefined}>
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                            {cleanContent(msg.content)}
+                        <div className="px-4 py-3 rounded-2xl text-sm bg-card border border-border/50 shadow-sm rounded-tl-sm leading-relaxed text-foreground prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-headings:my-2 prose-pre:my-2 prose-code:px-1 prose-code:py-0.5 prose-code:bg-muted prose-code:rounded prose-code:text-xs overflow-x-auto" dir={isRTL(msg.content) ? "rtl" : undefined}>
+                          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
+                            {msg.content}
                           </ReactMarkdown>
                         </div>
                       ) : (
@@ -342,9 +347,9 @@ export function AIAssistantPage() {
                 </Avatar>
                 <div className="flex flex-col gap-1 max-w-[80%]">
                   {streamingContent ? (
-                    <div className="px-4 py-3 rounded-2xl text-sm bg-card border border-border/50 shadow-sm rounded-tl-sm leading-relaxed text-foreground prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-headings:my-2 prose-pre:my-2 prose-code:px-1 prose-code:py-0.5 prose-code:bg-muted prose-code:rounded prose-code:text-xs" dir={isRTL(streamingContent) ? "rtl" : undefined}>
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {cleanContent(streamingContent)}
+                    <div className="px-4 py-3 rounded-2xl text-sm bg-card border border-border/50 shadow-sm rounded-tl-sm leading-relaxed text-foreground prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-headings:my-2 prose-pre:my-2 prose-code:px-1 prose-code:py-0.5 prose-code:bg-muted prose-code:rounded prose-code:text-xs overflow-x-auto" dir={isRTL(streamingContent) ? "rtl" : undefined}>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
+                        {streamingContent}
                       </ReactMarkdown>
                     </div>
                   ) : (
