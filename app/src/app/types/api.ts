@@ -33,6 +33,20 @@ export interface AISuggestion {
   prompt: string;
 }
 
+export interface ChatSession {
+  session_id: number;
+  start_time: string;
+  message_count: number;
+  preview: string;
+}
+
+export interface ChatSessionMessage {
+  message_id: number;
+  sender: string;
+  message_text: string;
+  timestamp: string;
+}
+
 export interface AISuggestionsResponse {
   suggestions: AISuggestion[];
 }

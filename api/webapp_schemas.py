@@ -186,6 +186,34 @@ class WebAISuggestionsRequest(BaseModel):
     dbSnapshot: Optional[str] = None
 
 
+class WebAISessionCreateRequest(BaseModel):
+    farm_id: Optional[int] = None
+
+
+class WebAISessionListItem(BaseModel):
+    session_id: int
+    start_time: datetime
+    message_count: int
+    preview: str = ""
+
+
+class WebAISessionMessagesRequest(BaseModel):
+    session_id: int
+
+
+class WebAISessionMessageItem(BaseModel):
+    message_id: int
+    sender: str
+    message_text: str
+    timestamp: datetime
+
+
+class WebAIAddMessageRequest(BaseModel):
+    session_id: int
+    sender: str
+    message_text: str
+
+
 class WebSensorData(BaseModel):
     reading_id: Optional[int] = None
     device_id: int

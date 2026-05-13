@@ -2324,12 +2324,20 @@ async def web_ai_ask_stream(
                                 try:
                                     parsed = _json.loads(trimmed[6:])
                                     token = parsed.get("response")
+                                    if not token:
+                                        choices = parsed.get("choices", [])
+                                        if choices:
+                                            token = choices[0].get("delta", {}).get("content")
                                 except _json.JSONDecodeError:
                                     pass
                             else:
                                 try:
                                     parsed = _json.loads(trimmed)
                                     token = parsed.get("response")
+                                    if not token:
+                                        choices = parsed.get("choices", [])
+                                        if choices:
+                                            token = choices[0].get("delta", {}).get("content")
                                 except _json.JSONDecodeError:
                                     pass
 
@@ -2421,6 +2429,101 @@ def web_ai_suggestions(
 
     suggestions = _ai_parse_suggestions(content)
     return {"suggestions": suggestions}
+
+
+# ── Chat Sessions ──
+
+
+@webapp_router.post("/ai/sessions/list")
+def web_ai_sessions_list(
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    rows = db.execute(
+        text("""
+            SELECT s.session_id, s.start_time,
+                   (SELECT COUNT(*) FROM ChatMessages WHERE session_id = s.session_id) AS message_count,
+                   COALESCE(
+                       (SELECT message_text FROM ChatMessages
+                        WHERE session_id = s.session_id
+                        ORDER BY timestamp DESC LIMIT 1),
+                       ''
+                   ) AS preview
+            FROM ChatbotSessions s
+            WHERE s.user_id = :uid
+            ORDER BY s.start_time DESC
+            LIMIT 50
+        """),
+        {"uid": uid},
+    ).mappings().all()
+    return {"sessions": [dict(r) for r in rows]}
+
+
+@webapp_router.post("/ai/sessions/create")
+def web_ai_session_create(
+    data: web_schemas.WebAISessionCreateRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    result = db.execute(
+        text("""
+            INSERT INTO ChatbotSessions (user_id, farm_id, start_time)
+            VALUES (:uid, :fid, NOW())
+        """),
+        {"uid": uid, "fid": data.farm_id},
+    )
+    db.commit()
+    session_id = result.lastrowid
+    return {"session_id": session_id}
+
+
+@webapp_router.post("/ai/sessions/messages")
+def web_ai_session_messages(
+    data: web_schemas.WebAISessionMessagesRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    session = db.execute(
+        text("SELECT session_id FROM ChatbotSessions WHERE session_id = :sid AND user_id = :uid"),
+        {"sid": data.session_id, "uid": uid},
+    ).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    rows = db.execute(
+        text("""
+            SELECT message_id, sender, message_text, timestamp
+            FROM ChatMessages
+            WHERE session_id = :sid
+            ORDER BY timestamp ASC
+        """),
+        {"sid": data.session_id},
+    ).mappings().all()
+    return {"messages": [dict(r) for r in rows]}
+
+
+@webapp_router.post("/ai/sessions/add-message")
+def web_ai_add_message(
+    data: web_schemas.WebAIAddMessageRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    session = db.execute(
+        text("SELECT session_id FROM ChatbotSessions WHERE session_id = :sid AND user_id = :uid"),
+        {"sid": data.session_id, "uid": uid},
+    ).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    db.execute(
+        text("""
+            INSERT INTO ChatMessages (session_id, sender, message_text, timestamp)
+            VALUES (:sid, :sender, :text, NOW())
+        """),
+        {"sid": data.session_id, "sender": data.sender, "text": data.message_text},
+    )
+    db.commit()
+    return {"status": "ok"}
 
 
 app.include_router(webapp_router)

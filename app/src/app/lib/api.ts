@@ -324,6 +324,22 @@ export const api = {
       request<{
         suggestions: Array<{ title: string; subtitle: string; prompt: string }>;
       }>("/webapp/ai/suggestions", data),
+
+    listSessions: () =>
+      request<{ sessions: ChatSession[] }>("/webapp/ai/sessions/list", {}),
+
+    createSession: (farmId?: number) =>
+      request<{ session_id: number }>("/webapp/ai/sessions/create", { farm_id: farmId }),
+
+    getSessionMessages: (sessionId: number) =>
+      request<{ messages: ChatSessionMessage[] }>("/webapp/ai/sessions/messages", { session_id: sessionId }),
+
+    addSessionMessage: (sessionId: number, sender: string, messageText: string) =>
+      request<{ status: string }>("/webapp/ai/sessions/add-message", {
+        session_id: sessionId,
+        sender,
+        message_text: messageText,
+      }),
   },
 
   web: {
