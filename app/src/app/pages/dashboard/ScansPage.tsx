@@ -1,12 +1,19 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../../components/ui/card";
+import { Card, CardContent } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "../../components/ui/dialog";
 import { ScrollArea } from "../../components/ui/scroll-area";
 import { useAppData } from "../../contexts/AppDataContext";
 import { api } from "../../lib/api";
 import type { ScanHistoryItem } from "../../types/api";
-import { ScanLine, AlertCircle, Leaf, RotateCcw, ImageIcon } from "lucide-react";
+import { ScanLine, AlertCircle, Leaf, RotateCcw, ImageIcon, Calendar, FileText, Maximize2 } from "lucide-react";
 
 export function ScansPage() {
   const { fields } = useAppData();
@@ -17,6 +24,7 @@ export function ScansPage() {
   const [rescanningId, setRescanningId] = useState<string | null>(null);
   const [annotatedImages, setAnnotatedImages] = useState<Record<string, string>>({});
   const [imageBlobs, setImageBlobs] = useState<Record<string, string>>({});
+  const [detailScan, setDetailScan] = useState<ScanHistoryItem | null>(null);
   const blobUrlsRef = useRef<string[]>([]);
 
   const revokeBlobs = () => {
@@ -82,7 +90,6 @@ export function ScansPage() {
           [scan.image_id]: `data:image/jpeg;base64,${res.annotated_image_base64}`,
         }));
       }
-      await fetchScans();
     } catch {
       // ignore
     } finally {
@@ -103,7 +110,7 @@ export function ScansPage() {
   };
 
   return (
-    <div className="p-6 space-y-6 max-w-[1200px] mx-auto">
+    <div className="p-6 space-y-6 max-w-[1400px] mx-auto">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">AI Scan Analysis</h1>
         <p className="text-muted-foreground">Crop scan images and disease detection results</p>
@@ -153,101 +160,60 @@ export function ScansPage() {
             </Card>
           ) : (
             <ScrollArea className="h-[calc(100vh-280px)]">
-              <div className="grid gap-6 pr-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 pr-4">
                 {scans.map((scan) => (
-                  <Card key={scan.image_id} className="border-border/50 bg-card/50 overflow-hidden">
-                    <div className="flex flex-col md:flex-row">
-                      <div className="md:w-72 shrink-0 bg-muted/30 flex items-center justify-center">
-                        {imageBlobs[scan.image_id] ? (
-                          <img
-                            src={imageBlobs[scan.image_id]}
-                            alt={`Scan ${scan.image_id.slice(0, 8)}`}
-                            className="w-full h-56 md:h-48 object-cover"
-                          />
-                        ) : scan.image_path ? (
-                          <div className="w-full h-56 md:h-48 flex items-center justify-center text-muted-foreground">
-                            <div className="flex flex-col items-center gap-2">
-                              <div className="w-4 h-4 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin" />
-                              <span className="text-xs">Loading...</span>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="w-full h-56 md:h-48 flex items-center justify-center text-muted-foreground">
-                            <ImageIcon className="h-8 w-8" />
-                          </div>
-                        )}
+                  <Card
+                    key={scan.image_id}
+                    className="border-border/50 bg-card/50 hover:border-emerald-500/40 transition-colors cursor-pointer overflow-hidden group"
+                    onClick={() => setDetailScan(scan)}
+                  >
+                    <div className="aspect-[4/3] bg-muted/30 relative overflow-hidden">
+                      {imageBlobs[scan.image_id] ? (
+                        <img
+                          src={imageBlobs[scan.image_id]}
+                          alt={`Scan ${scan.image_id.slice(0, 8)}`}
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-muted-foreground">
+                          <ImageIcon className="h-8 w-8" />
+                        </div>
+                      )}
+                      <div className="absolute top-2 right-2">
+                        <div className="p-1.5 bg-background/80 backdrop-blur-sm rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
+                          <Maximize2 className="h-3.5 w-3.5 text-muted-foreground" />
+                        </div>
                       </div>
-                      <div className="flex-1 p-5">
-                        <CardHeader className="p-0 pb-3">
-                          <div className="flex items-start justify-between">
-                            <div>
-                              <CardTitle className="text-base flex items-center gap-2">
-                                <ScanLine className="h-4 w-4 text-emerald-500" />
-                                Scan {scan.image_id.slice(0, 8)}...
-                              </CardTitle>
-                              <CardDescription>
-                                {new Date(scan.capture_timestamp).toLocaleString()}
-                                {scan.file_size ? ` · ${(scan.file_size / 1024).toFixed(1)} KB` : ""}
-                              </CardDescription>
-                            </div>
-                            {scan.disease_detected && (
-                              <Badge
-                                variant={isHealthy(scan.disease_detected) ? "secondary" : "destructive"}
-                                className="shrink-0"
-                              >
-                                {scan.disease_detected}
-                              </Badge>
-                            )}
-                          </div>
-                        </CardHeader>
-                        <CardContent className="p-0">
-                          {scan.disease_detected ? (
-                            <div className="space-y-2">
-                              <div className="flex items-center gap-4 text-sm">
-                                <span className="text-muted-foreground">Confidence:</span>
-                                <span className={`font-medium ${confidenceColor(scan.confidence_score)}`}>
-                                  {scan.confidence_score != null
-                                    ? `${(scan.confidence_score * 100).toFixed(1)}%`
-                                    : "N/A"}
-                                </span>
-                              </div>
-                              {scan.recommendation && (
-                                <div className="text-sm text-muted-foreground">
-                                  <span className="font-medium text-foreground">Recommendation:</span>{" "}
-                                  {scan.recommendation}
-                                </div>
-                              )}
-                            </div>
-                          ) : (
-                            <p className="text-sm text-muted-foreground">Analysis pending</p>
-                          )}
-
-                          {annotatedImages[scan.image_id] && (
-                            <div className="mt-3">
-                              <p className="text-xs font-medium text-muted-foreground mb-2">Annotated result:</p>
-                              <img
-                                src={annotatedImages[scan.image_id]}
-                                alt="Annotated scan"
-                                className="max-h-48 rounded-lg border border-border/50 object-contain"
-                              />
-                            </div>
-                          )}
-
-                          <div className="mt-4">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => handleRescan(scan)}
-                              disabled={rescanningId === scan.image_id}
-                              className="gap-2"
-                            >
-                              <RotateCcw className={`h-3.5 w-3.5 ${rescanningId === scan.image_id ? "animate-spin" : ""}`} />
-                              {rescanningId === scan.image_id ? "Rescanning..." : "Rescan"}
-                            </Button>
-                          </div>
-                        </CardContent>
-                      </div>
+                      {scan.disease_detected && (
+                        <div className="absolute top-2 left-2">
+                          <Badge
+                            variant={isHealthy(scan.disease_detected) ? "secondary" : "destructive"}
+                            className="text-[10px] px-1.5 py-0"
+                          >
+                            {scan.disease_detected}
+                          </Badge>
+                        </div>
+                      )}
                     </div>
+                    <CardContent className="p-3 space-y-1.5">
+                      <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                        <Calendar className="h-3 w-3" />
+                        {new Date(scan.capture_timestamp).toLocaleDateString()}
+                        {scan.file_size ? ` · ${(scan.file_size / 1024).toFixed(1)} KB` : ""}
+                      </div>
+                      {scan.disease_detected ? (
+                        <div className="flex items-center gap-2 text-xs">
+                          <span className="text-muted-foreground">Confidence:</span>
+                          <span className={`font-medium ${confidenceColor(scan.confidence_score)}`}>
+                            {scan.confidence_score != null
+                              ? `${(scan.confidence_score * 100).toFixed(1)}%`
+                              : "N/A"}
+                          </span>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground italic">Analysis pending</p>
+                      )}
+                    </CardContent>
                   </Card>
                 ))}
               </div>
@@ -255,6 +221,105 @@ export function ScansPage() {
           )}
         </>
       )}
+
+      <Dialog open={!!detailScan} onOpenChange={(o) => !o && setDetailScan(null)}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          {detailScan && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <ScanLine className="h-4 w-4 text-emerald-500" />
+                  Scan {detailScan.image_id.slice(0, 8)}...
+                </DialogTitle>
+                <DialogDescription>
+                  {new Date(detailScan.capture_timestamp).toLocaleString()}
+                  {detailScan.file_size ? ` · ${(detailScan.file_size / 1024).toFixed(1)} KB` : ""}
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="grid md:grid-cols-2 gap-6">
+                <div className="space-y-4">
+                  <div className="rounded-lg overflow-hidden border border-border/50 bg-muted/20">
+                    {imageBlobs[detailScan.image_id] ? (
+                      <img
+                        src={imageBlobs[detailScan.image_id]}
+                        alt={`Scan ${detailScan.image_id.slice(0, 8)}`}
+                        className="w-full h-auto object-cover"
+                      />
+                    ) : (
+                      <div className="w-full h-48 flex items-center justify-center text-muted-foreground">
+                        <ImageIcon className="h-8 w-8" />
+                      </div>
+                    )}
+                  </div>
+
+                  {annotatedImages[detailScan.image_id] && (
+                    <div>
+                      <p className="text-xs font-medium text-muted-foreground mb-2">Annotated result:</p>
+                      <div className="rounded-lg overflow-hidden border border-border/50 bg-muted/20">
+                        <img
+                          src={annotatedImages[detailScan.image_id]}
+                          alt="Annotated scan"
+                          className="w-full h-auto"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-4">
+                  {detailScan.disease_detected ? (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2">
+                        <Badge
+                          variant={isHealthy(detailScan.disease_detected) ? "secondary" : "destructive"}
+                          className="text-sm px-3 py-1"
+                        >
+                          {detailScan.disease_detected}
+                        </Badge>
+                      </div>
+                      <div className="flex items-center gap-2 text-sm">
+                        <span className="text-muted-foreground">Confidence:</span>
+                        <span className={`font-medium text-base ${confidenceColor(detailScan.confidence_score)}`}>
+                          {detailScan.confidence_score != null
+                            ? `${(detailScan.confidence_score * 100).toFixed(1)}%`
+                            : "N/A"}
+                        </span>
+                      </div>
+                      {detailScan.recommendation && (
+                        <div>
+                          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">
+                            <FileText className="h-3 w-3 inline mr-1" />
+                            Recommendation
+                          </p>
+                          <p className="text-sm text-muted-foreground leading-relaxed">
+                            {detailScan.recommendation}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-sm text-muted-foreground italic py-4">Analysis pending</div>
+                  )}
+
+                  <div className="pt-4 border-t border-border/50">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleRescan(detailScan)}
+                      disabled={rescanningId === detailScan.image_id}
+                      className="gap-2"
+                    >
+                      <RotateCcw className={`h-3.5 w-3.5 ${rescanningId === detailScan.image_id ? "animate-spin" : ""}`} />
+                      {rescanningId === detailScan.image_id ? "Rescanning..." : "Rescan"}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

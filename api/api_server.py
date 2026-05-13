@@ -2934,22 +2934,6 @@ async def web_ai_vision_rescan(
         top_disease = detections[confs.index(max_conf)]["label"]
 
     recommendation = _generate_recommendation(top_disease)
-    now_ts = datetime.now(timezone.utc)
-
-    db.execute(
-        text("""
-            INSERT INTO AIResults (image_id, disease_detected, confidence_score, recommendation, analysis_timestamp)
-            VALUES (:iid, :disease, :confidence, :recommendation, :ts)
-        """),
-        {
-            "iid": data.image_id,
-            "disease": top_disease,
-            "confidence": round(max_conf, 4),
-            "recommendation": recommendation,
-            "ts": now_ts,
-        },
-    )
-    db.commit()
 
     response = {
         "status": "ok",
