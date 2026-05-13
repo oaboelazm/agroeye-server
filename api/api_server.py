@@ -11,9 +11,9 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Generator
 
-from fastapi import FastAPI, UploadFile, File, Form, Depends, HTTPException, Request
+from fastapi import APIRouter, FastAPI, UploadFile, File, Form, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -995,32 +995,41 @@ def _get_vision_model():
     return _vision_model
 
 
+def _generate_recommendation(disease: str) -> str:
+    recommendations = {
+        "ripe": "Fruit is ripe and ready for harvest. Schedule picking within 2-3 days.",
+        "unripe": "Fruit is still developing. Maintain current care routine and monitor weekly.",
+        "blight": "Apply copper-based fungicide immediately. Remove affected leaves and improve air circulation.",
+        "leaf_blight": "Apply copper-based fungicide immediately. Remove affected leaves and improve air circulation.",
+        "early_blight": "Apply fungicide (chlorothalonil or mancozeb). Practice crop rotation next season.",
+        "late_blight": "Apply metalaxyl-based fungicide. Destroy severely infected plants to prevent spread.",
+        "powdery_mildew": "Apply sulfur-based fungicide or neem oil. Ensure adequate spacing between plants.",
+        "downy_mildew": "Apply fungicide (metalaxyl or fosetyl-Al). Reduce humidity and avoid overhead watering.",
+        "rust": "Apply fungicide (tebuconazole or propiconazole). Remove and destroy infected tissue.",
+        "healthy": "No disease detected. Continue regular monitoring and preventive care.",
+    }
+    key = disease.lower().replace(" ", "_")
+    return recommendations.get(key, f"Monitor the detected condition ({disease}) and consult an agronomist for targeted treatment.")
+
+
 @app.post("/ai/vision/analyze")
 async def ai_vision_analyze(
     image_file: UploadFile = File(...),
-    user_id: Optional[str] = Form(None),
-    device_id: Optional[str] = Form(None),
-    field_id: Optional[str] = Form(None),
+    device_id: int = Form(...),
+    field_id: int = Form(...),
+    user_id: Optional[int] = Form(None),
     return_annotated: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
 ):
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    upload_dir = os.path.join(base_dir, "upload")
-    os.makedirs(upload_dir, exist_ok=True)
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-    timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    timestamp = datetime.now(timezone.utc)
+    ts_str = timestamp.strftime("%Y%m%dT%H%M%SZ")
     ext = os.path.splitext(image_file.filename or "")[1].lstrip(".") or "jpg"
-    tags = []
-    if user_id:
-        tags.append(f"user-{_safe_tag(user_id)}")
-    if device_id:
-        tags.append(f"device-{_safe_tag(device_id)}")
-    if field_id:
-        tags.append(f"field-{_safe_tag(field_id)}")
 
     image_id = str(uuid.uuid4())
-    tag_part = "_".join(tags) if tags else "anon"
-    filename = f"upload_{timestamp}_{tag_part}_{image_id}.{ext}"
-    file_path = os.path.join(upload_dir, filename)
+    filename = f"scan_{uuid.uuid4()}.{ext}"
+    file_path = os.path.join(UPLOAD_DIR, filename)
 
     content = await image_file.read()
     with open(file_path, "wb") as f:
@@ -1033,6 +1042,8 @@ async def ai_vision_analyze(
     names = getattr(result, "names", None) or getattr(model, "names", {})
     detections = []
     confs = []
+    top_disease = "Unknown"
+    max_conf = 0.0
     if result.boxes is not None and len(result.boxes) > 0:
         xyxy = result.boxes.xyxy.tolist()
         conf = result.boxes.conf.tolist()
@@ -1049,9 +1060,40 @@ async def ai_vision_analyze(
                     "bbox_xyxy": [float(v) for v in xyxy[i]],
                 }
             )
+        max_conf = max(confs)
+        top_disease = detections[confs.index(max_conf)]["label"]
 
-    stored_rel_path = os.path.relpath(file_path, base_dir)
-    max_conf = max(confs) if confs else 0.0
+    recommendation = _generate_recommendation(top_disease)
+
+    db.execute(
+        text("""
+            INSERT INTO Images (image_id, device_id, field_id, image_path, capture_timestamp, file_size)
+            VALUES (:iid, :did, :fid, :path, :ts, :size)
+        """),
+        {
+            "iid": image_id,
+            "did": device_id,
+            "fid": field_id,
+            "path": filename,
+            "ts": timestamp,
+            "size": len(content),
+        },
+    )
+
+    db.execute(
+        text("""
+            INSERT INTO AIResults (image_id, disease_detected, confidence_score, recommendation, analysis_timestamp)
+            VALUES (:iid, :disease, :confidence, :recommendation, :ts)
+        """),
+        {
+            "iid": image_id,
+            "disease": top_disease,
+            "confidence": round(max_conf, 4),
+            "recommendation": recommendation,
+            "ts": timestamp,
+        },
+    )
+    db.commit()
 
     annotated_b64 = None
     if _to_bool(return_annotated):
@@ -1062,13 +1104,13 @@ async def ai_vision_analyze(
         if not ok:
             raise RuntimeError("Failed to encode annotated image")
         annotated_b64 = base64.b64encode(encoded.tobytes()).decode("utf-8")
+
     response = {
         "status": "ok",
         "image_id": image_id,
         "filename": filename,
-        "stored_path": stored_rel_path,
         "meta": {
-            "timestamp_utc": timestamp,
+            "timestamp_utc": ts_str,
             "user_id": user_id,
             "device_id": device_id,
             "field_id": field_id,
@@ -1076,6 +1118,11 @@ async def ai_vision_analyze(
         "detections": detections,
         "max_confidence": float(max_conf),
         "count": len(detections),
+        "analysis": {
+            "disease_detected": top_disease,
+            "confidence_score": float(max_conf),
+            "recommendation": recommendation,
+        },
     }
 
     if annotated_b64 is not None:
@@ -1186,4 +1233,1195 @@ def ingest_hardware_log(
         ],
         "received_at": datetime.now(timezone.utc),
     }
+
+
+# =========================================================
+# Web App Endpoints (POST-based)
+# =========================================================
+
+import webapp_schemas as web_schemas
+
+webapp_router = APIRouter(prefix="/webapp", tags=["Web App"])
+
+
+def _get_user_id_from_token(token: str = Depends(oauth2_scheme)) -> int:
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        uid = payload.get("user_id")
+        if uid is None:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        return uid
+    except jwt.JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+
+def _get_farm_ids_for_user(uid: int, db: Session) -> list[int]:
+    rows = db.execute(
+        text("SELECT farm_id FROM Farms WHERE user_id = :uid"),
+        {"uid": uid}
+    ).mappings().all()
+    return [r["farm_id"] for r in rows]
+
+
+def _get_field_ids_for_farms(farm_ids: list[int], db: Session) -> list[int]:
+    if not farm_ids:
+        return []
+    placeholders = ", ".join([f":fid_{i}" for i in range(len(farm_ids))])
+    params = {f"fid_{i}": fid for i, fid in enumerate(farm_ids)}
+    rows = db.execute(
+        text(f"SELECT field_id FROM Fields WHERE farm_id IN ({placeholders})"),
+        params
+    ).mappings().all()
+    return [r["field_id"] for r in rows]
+
+
+def _get_device_ids_for_fields(field_ids: list[int], db: Session) -> list[int]:
+    if not field_ids:
+        return []
+    placeholders = ", ".join([f":fid_{i}" for i in range(len(field_ids))])
+    params = {f"fid_{i}": fid for i, fid in enumerate(field_ids)}
+    rows = db.execute(
+        text(f"SELECT device_id FROM Devices WHERE field_id IN ({placeholders})"),
+        params
+    ).mappings().all()
+    return [r["device_id"] for r in rows]
+
+
+@webapp_router.post("/dashboard")
+def web_dashboard(
+    data: web_schemas.WebDashboardRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    farm_ids = _get_farm_ids_for_user(uid, db)
+    if data.farm_id:
+        if data.farm_id not in farm_ids:
+            raise HTTPException(status_code=403, detail="Farm not accessible")
+        farm_ids = [data.farm_id]
+
+    if not farm_ids:
+        return web_schemas.WebDashboardData()
+
+    field_ids = _get_field_ids_for_farms(farm_ids, db)
+    device_ids = _get_device_ids_for_fields(field_ids, db)
+
+    total_fields = len(field_ids)
+    total_devices = len(device_ids)
+
+    active_devices = 0
+    total_nodes = 0
+    active_nodes = 0
+    low_battery_nodes = 0
+    today_irrigation_events = 0
+    today_irrigation_duration = 0.0
+    alerts_count = 0
+
+    if device_ids:
+        placeholders = ", ".join([f":did_{i}" for i in range(len(device_ids))])
+        params = {f"did_{i}": did for i, did in enumerate(device_ids)}
+
+        active_row = db.execute(
+            text(f"SELECT COUNT(*) as c FROM Devices WHERE device_id IN ({placeholders}) AND status = 'active'"),
+            params
+        ).mappings().first()
+        active_devices = active_row["c"] if active_row else 0
+
+        node_row = db.execute(
+            text(f"SELECT COUNT(*) as c FROM SensingNodes WHERE device_id IN ({placeholders})"),
+            params
+        ).mappings().first()
+        total_nodes = node_row["c"] if node_row else 0
+
+        active_node_row = db.execute(
+            text(f"SELECT COUNT(*) as c FROM SensingNodes WHERE device_id IN ({placeholders}) AND status = 'active'"),
+            params
+        ).mappings().first()
+        active_nodes = active_node_row["c"] if active_node_row else 0
+
+        lb_row = db.execute(
+            text(f"SELECT COUNT(*) as c FROM SensingNodes WHERE device_id IN ({placeholders}) AND battery_level < 20"),
+            params
+        ).mappings().first()
+        low_battery_nodes = lb_row["c"] if lb_row else 0
+
+    if field_ids:
+        fid_placeholders = ", ".join([f":fid_{i}" for i in range(len(field_ids))])
+        fid_params = {f"fid_{i}": fid for i, fid in enumerate(field_ids)}
+
+        today_irr = db.execute(
+            text(f"""
+                SELECT COUNT(*) as c, COALESCE(SUM(TIMESTAMPDIFF(MINUTE, start_time, end_time)), 0) as dur
+                FROM IrrigationEvents
+                WHERE field_id IN ({fid_placeholders})
+                AND DATE(start_time) = CURDATE()
+            """),
+            fid_params
+        ).mappings().first()
+        if today_irr:
+            today_irrigation_events = today_irr["c"]
+            today_irrigation_duration = float(today_irr["dur"])
+
+        alert_row = db.execute(
+            text(f"""
+                SELECT COUNT(*) as c FROM Notifications
+                WHERE farm_id IN ({', '.join([f':afid_{i}' for i in range(len(farm_ids))])})
+                AND is_read = 0
+            """),
+            {f"afid_{i}": fid for i, fid in enumerate(farm_ids)}
+        ).mappings().first()
+        alerts_count = alert_row["c"] if alert_row else 0
+
+    unread_row = db.execute(
+        text("SELECT COUNT(*) as c FROM Notifications WHERE user_id = :uid AND is_read = 0"),
+        {"uid": uid}
+    ).mappings().first()
+    unread_notifications = unread_row["c"] if unread_row else 0
+
+    return web_schemas.WebDashboardData(
+        total_fields=total_fields,
+        total_devices=total_devices,
+        active_devices=active_devices,
+        total_nodes=total_nodes,
+        active_nodes=active_nodes,
+        low_battery_nodes=low_battery_nodes,
+        alerts_count=alerts_count,
+        unread_notifications=unread_notifications,
+        today_irrigation_events=today_irrigation_events,
+        today_irrigation_duration_minutes=today_irrigation_duration,
+    )
+
+
+@webapp_router.post("/fields/list")
+def web_fields_list(
+    data: web_schemas.WebFieldsListRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    farm_ids = _get_farm_ids_for_user(uid, db)
+    if data.farm_id not in farm_ids:
+        raise HTTPException(status_code=403, detail="Farm not accessible")
+
+    rows = db.execute(
+        text("SELECT field_id, name, crop_type, area_size FROM Fields WHERE farm_id = :fid"),
+        {"fid": data.farm_id}
+    ).mappings().all()
+
+    result = []
+    for r in rows:
+        dev_count = db.execute(
+            text("SELECT COUNT(*) as c FROM Devices WHERE field_id = :fid"),
+            {"fid": r["field_id"]}
+        ).mappings().first()
+        result.append({
+            "field_id": r["field_id"],
+            "name": r["name"],
+            "crop_type": r["crop_type"],
+            "area_size": r["area_size"],
+            "devices_count": dev_count["c"] if dev_count else 0,
+        })
+    return {"fields": result}
+
+
+@webapp_router.post("/fields/overview")
+def web_field_overview(
+    data: web_schemas.WebFieldOverviewRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    field = db.execute(
+        text("""
+            SELECT f.field_id, f.name, f.crop_type, f.area_size, f.farm_id
+            FROM Fields f
+            JOIN Farms fa ON f.farm_id = fa.farm_id
+            WHERE f.field_id = :fid AND fa.user_id = :uid
+        """),
+        {"fid": data.field_id, "uid": uid}
+    ).mappings().first()
+
+    if not field:
+        raise HTTPException(status_code=404, detail="Field not found")
+
+    device_ids = _get_device_ids_for_fields([data.field_id], db)
+    devices_count = len(device_ids)
+
+    active_row = db.execute(
+        text("SELECT COUNT(*) as c FROM Devices WHERE field_id = :fid AND status = 'active'"),
+        {"fid": data.field_id}
+    ).mappings().first()
+    active_devices = active_row["c"] if active_row else 0
+
+    avg_data = None
+    if device_ids:
+        placeholders = ", ".join([f":did_{i}" for i in range(len(device_ids))])
+        params = {f"did_{i}": did for i, did in enumerate(device_ids)}
+        avg_data = db.execute(
+            text(f"""
+                SELECT
+                    AVG(temperature_air) AS avg_temperature_air,
+                    AVG(humidity_air) AS avg_humidity_air,
+                    AVG(soil_moisture) AS avg_soil_moisture,
+                    AVG(soil_ph) AS avg_soil_ph,
+                    AVG(nitrogen) AS avg_nitrogen,
+                    AVG(phosphorus) AS avg_phosphorus,
+                    AVG(potassium) AS avg_potassium
+                FROM SensorReadings
+                WHERE device_id IN ({placeholders})
+            """),
+            params
+        ).mappings().first()
+
+    last_irr = db.execute(
+        text("""
+            SELECT start_time FROM IrrigationEvents
+            WHERE field_id = :fid AND start_time <= NOW()
+            ORDER BY start_time DESC LIMIT 1
+        """),
+        {"fid": data.field_id}
+    ).mappings().first()
+
+    next_irr = db.execute(
+        text("""
+            SELECT start_time FROM IrrigationEvents
+            WHERE field_id = :fid AND start_time > NOW()
+            ORDER BY start_time ASC LIMIT 1
+        """),
+        {"fid": data.field_id}
+    ).mappings().first()
+
+    return web_schemas.WebFieldOverview(
+        field_id=field["field_id"],
+        name=field["name"],
+        crop_type=field["crop_type"],
+        area_size=field["area_size"],
+        devices_count=devices_count,
+        active_devices=active_devices,
+        avg_temperature_air=avg_data["avg_temperature_air"] if avg_data else None,
+        avg_humidity_air=avg_data["avg_humidity_air"] if avg_data else None,
+        avg_soil_moisture=avg_data["avg_soil_moisture"] if avg_data else None,
+        avg_soil_ph=avg_data["avg_soil_ph"] if avg_data else None,
+        avg_nitrogen=avg_data["avg_nitrogen"] if avg_data else None,
+        avg_phosphorus=avg_data["avg_phosphorus"] if avg_data else None,
+        avg_potassium=avg_data["avg_potassium"] if avg_data else None,
+        last_irrigation=last_irr["start_time"] if last_irr else None,
+        next_irrigation=next_irr["start_time"] if next_irr else None,
+    )
+
+
+@webapp_router.post("/devices/list")
+def web_devices_list(
+    data: web_schemas.WebDevicesListRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    farm_ids = _get_farm_ids_for_user(uid, db)
+    if data.farm_id not in farm_ids:
+        raise HTTPException(status_code=403, detail="Farm not accessible")
+
+    field_ids = _get_field_ids_for_farms([data.farm_id], db)
+    if not field_ids:
+        return {"devices": []}
+
+    placeholders = ", ".join([f":fid_{i}" for i in range(len(field_ids))])
+    params = {f"fid_{i}": fid for i, fid in enumerate(field_ids)}
+
+    rows = db.execute(
+        text(f"""
+            SELECT d.device_id, d.field_id, f.name AS field_name, d.device_type,
+                   d.serial_number, d.status, d.location_coords
+            FROM Devices d
+            JOIN Fields f ON d.field_id = f.field_id
+            WHERE d.field_id IN ({placeholders})
+        """),
+        params
+    ).mappings().all()
+
+    return {"devices": [dict(r) for r in rows]}
+
+
+@webapp_router.post("/devices/details")
+def web_device_details(
+    data: web_schemas.WebDeviceDetailsRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    device = db.execute(
+        text("""
+            SELECT d.*, f.name AS field_name
+            FROM Devices d
+            JOIN Fields f ON d.field_id = f.field_id
+            JOIN Farms fa ON f.farm_id = fa.farm_id
+            WHERE d.device_id = :did AND fa.user_id = :uid
+        """),
+        {"did": data.device_id, "uid": uid}
+    ).mappings().first()
+
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    nodes_row = db.execute(
+        text("SELECT COUNT(*) as c FROM SensingNodes WHERE device_id = :did"),
+        {"did": data.device_id}
+    ).mappings().first()
+    nodes_count = nodes_row["c"] if nodes_row else 0
+
+    active_nodes_row = db.execute(
+        text("SELECT COUNT(*) as c FROM SensingNodes WHERE device_id = :did AND status = 'active'"),
+        {"did": data.device_id}
+    ).mappings().first()
+    active_nodes = active_nodes_row["c"] if active_nodes_row else 0
+
+    latest = db.execute(
+        text("""
+            SELECT * FROM SensorReadings
+            WHERE device_id = :did
+            ORDER BY timestamp DESC LIMIT 1
+        """),
+        {"did": data.device_id}
+    ).mappings().first()
+
+    latest_reading = None
+    if latest:
+        latest_reading = web_schemas.WebSensorData(
+            reading_id=latest.get("reading_id"),
+            device_id=latest["device_id"],
+            timestamp=latest.get("timestamp"),
+            temperature_air=latest.get("temperature_air"),
+            humidity_air=latest.get("humidity_air"),
+            temperature_soil=latest.get("temperature_soil"),
+            humidity_soil=latest.get("humidity_soil"),
+            soil_moisture=latest.get("soil_moisture"),
+            soil_ph=latest.get("soil_ph"),
+            nitrogen=latest.get("nitrogen"),
+            phosphorus=latest.get("phosphorus"),
+            potassium=latest.get("potassium"),
+            conductivity=latest.get("conductivity"),
+            light_intensity=latest.get("light_intensity"),
+            co2=latest.get("co2"),
+            battery_level=latest.get("battery_level"),
+        )
+
+    return web_schemas.WebDeviceDetail(
+        device_id=device["device_id"],
+        field_id=device["field_id"],
+        field_name=device.get("field_name"),
+        device_type=device["device_type"],
+        serial_number=device["serial_number"],
+        status=device["status"],
+        location_coords=device.get("location_coords"),
+        nodes_count=nodes_count,
+        active_nodes=active_nodes,
+        latest_reading=latest_reading,
+    )
+
+
+@webapp_router.post("/irrigation/upcoming")
+def web_irrigation_upcoming(
+    data: web_schemas.WebIrrigationUpcomingRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    farm_ids = _get_farm_ids_for_user(uid, db)
+    if data.farm_id not in farm_ids:
+        raise HTTPException(status_code=403, detail="Farm not accessible")
+
+    field_ids = _get_field_ids_for_farms([data.farm_id], db)
+    if not field_ids:
+        return {"events": []}
+
+    placeholders = ", ".join([f":fid_{i}" for i in range(len(field_ids))])
+    params = {f"fid_{i}": fid for i, fid in enumerate(field_ids)}
+
+    rows = db.execute(
+        text(f"""
+            SELECT e.irrigation_id, e.field_id, f.name AS field_name,
+                   e.start_time, e.end_time, e.status
+            FROM IrrigationEvents e
+            JOIN Fields f ON e.field_id = f.field_id
+            WHERE e.field_id IN ({placeholders})
+            AND e.start_time > NOW()
+            ORDER BY e.start_time ASC
+            LIMIT 5
+        """),
+        params
+    ).mappings().all()
+
+    events = []
+    for r in rows:
+        duration = None
+        if r["start_time"] and r["end_time"]:
+            duration = (r["end_time"] - r["start_time"]).total_seconds() / 60.0
+        events.append(web_schemas.WebIrrigationEvent(
+            irrigation_id=r["irrigation_id"],
+            field_id=r["field_id"],
+            field_name=r.get("field_name"),
+            start_time=r.get("start_time"),
+            end_time=r.get("end_time"),
+            duration_minutes=duration,
+            status=r.get("status", "scheduled"),
+        ))
+
+    return {"events": events}
+
+
+@webapp_router.post("/irrigation/recent")
+def web_irrigation_recent(
+    data: web_schemas.WebIrrigationRecentRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    farm_ids = _get_farm_ids_for_user(uid, db)
+    if data.farm_id not in farm_ids:
+        raise HTTPException(status_code=403, detail="Farm not accessible")
+
+    field_ids = _get_field_ids_for_farms([data.farm_id], db)
+    if not field_ids:
+        return {"events": []}
+
+    placeholders = ", ".join([f":fid_{i}" for i in range(len(field_ids))])
+    params = {f"fid_{i}": fid for i, fid in enumerate(field_ids)}
+
+    rows = db.execute(
+        text(f"""
+            SELECT e.irrigation_id, e.field_id, f.name AS field_name,
+                   e.start_time, e.end_time, e.status
+            FROM IrrigationEvents e
+            JOIN Fields f ON e.field_id = f.field_id
+            WHERE e.field_id IN ({placeholders})
+            AND e.start_time <= NOW()
+            ORDER BY e.start_time DESC
+            LIMIT 10
+        """),
+        params
+    ).mappings().all()
+
+    events = []
+    for r in rows:
+        duration = None
+        if r["start_time"] and r["end_time"]:
+            duration = (r["end_time"] - r["start_time"]).total_seconds() / 60.0
+        events.append(web_schemas.WebIrrigationEvent(
+            irrigation_id=r["irrigation_id"],
+            field_id=r["field_id"],
+            field_name=r.get("field_name"),
+            start_time=r.get("start_time"),
+            end_time=r.get("end_time"),
+            duration_minutes=duration,
+            status=r.get("status", "completed"),
+        ))
+
+    return {"events": events}
+
+
+@webapp_router.post("/irrigation/summary")
+def web_irrigation_summary(
+    data: web_schemas.WebIrrigationSummaryRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    farm_ids = _get_farm_ids_for_user(uid, db)
+    if data.farm_id not in farm_ids:
+        raise HTTPException(status_code=403, detail="Farm not accessible")
+
+    field_ids = _get_field_ids_for_farms([data.farm_id], db)
+    if not field_ids:
+        return web_schemas.WebIrrigationSummary()
+
+    placeholders = ", ".join([f":fid_{i}" for i in range(len(field_ids))])
+    params = {f"fid_{i}": fid for i, fid in enumerate(field_ids)}
+
+    today = db.execute(
+        text(f"""
+            SELECT COUNT(*) as c, COALESCE(SUM(TIMESTAMPDIFF(MINUTE, start_time, end_time)), 0) as dur
+            FROM IrrigationEvents
+            WHERE field_id IN ({placeholders})
+            AND DATE(start_time) = CURDATE()
+        """),
+        params
+    ).mappings().first()
+
+    week = db.execute(
+        text(f"""
+            SELECT COUNT(*) as c FROM IrrigationEvents
+            WHERE field_id IN ({placeholders})
+            AND start_time >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+        """),
+        params
+    ).mappings().first()
+
+    month = db.execute(
+        text(f"""
+            SELECT COUNT(*) as c FROM IrrigationEvents
+            WHERE field_id IN ({placeholders})
+            AND start_time >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+        """),
+        params
+    ).mappings().first()
+
+    return web_schemas.WebIrrigationSummary(
+        today_events=today["c"] if today else 0,
+        today_duration_minutes=float(today["dur"]) if today else 0.0,
+        week_events=week["c"] if week else 0,
+        month_events=month["c"] if month else 0,
+    )
+
+
+@webapp_router.post("/notifications/list")
+def web_notifications_list(
+    data: web_schemas.WebNotificationsListRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    farm_ids = _get_farm_ids_for_user(uid, db)
+    if data.farm_id not in farm_ids:
+        raise HTTPException(status_code=403, detail="Farm not accessible")
+
+    rows = db.execute(
+        text("""
+            SELECT notification_id, type, message, is_read, sent_at
+            FROM Notifications
+            WHERE user_id = :uid AND farm_id = :fid
+            ORDER BY sent_at DESC
+            LIMIT 100
+        """),
+        {"uid": uid, "fid": data.farm_id}
+    ).mappings().all()
+
+    return {"notifications": [dict(r) for r in rows]}
+
+
+@webapp_router.post("/notifications/unread-count")
+def web_notifications_unread(
+    data: web_schemas.WebNotificationsUnreadRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    farm_ids = _get_farm_ids_for_user(uid, db)
+    if data.farm_id not in farm_ids:
+        raise HTTPException(status_code=403, detail="Farm not accessible")
+
+    row = db.execute(
+        text("""
+            SELECT COUNT(*) as c FROM Notifications
+            WHERE user_id = :uid AND farm_id = :fid AND is_read = 0
+        """),
+        {"uid": uid, "fid": data.farm_id}
+    ).mappings().first()
+
+    return {"unread_count": row["c"] if row else 0}
+
+
+@webapp_router.post("/notifications/mark-read")
+def web_mark_notification_read(
+    data: web_schemas.WebMarkNotificationReadRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    result = db.execute(
+        text("""
+            UPDATE Notifications SET is_read = 1
+            WHERE notification_id = :nid AND user_id = :uid
+        """),
+        {"nid": data.notification_id, "uid": uid}
+    )
+    db.commit()
+
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Notification not found")
+
+    return {"status": "success", "notification_id": data.notification_id}
+
+
+@webapp_router.post("/reports/summary")
+def web_reports_summary(
+    data: web_schemas.WebReportsSummaryRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    farm_ids = _get_farm_ids_for_user(uid, db)
+    if data.farm_id not in farm_ids:
+        raise HTTPException(status_code=403, detail="Farm not accessible")
+
+    field_ids = _get_field_ids_for_farms([data.farm_id], db)
+    if not field_ids:
+        return web_schemas.WebReportSummary()
+
+    total_fields = len(field_ids)
+    device_ids = _get_device_ids_for_fields(field_ids, db)
+    total_devices = len(device_ids)
+
+    irr_fid_ph = ", ".join([f":fid_{i}" for i in range(len(field_ids))])
+    irr_fid_params = {f"fid_{i}": fid for i, fid in enumerate(field_ids)}
+    irr_row = db.execute(
+        text(f"SELECT COUNT(*) as c FROM IrrigationEvents WHERE field_id IN ({irr_fid_ph})"),
+        irr_fid_params
+    ).mappings().first()
+    total_irrigation = irr_row["c"] if irr_row else 0
+
+    avg_data = None
+    if device_ids:
+        placeholders = ", ".join([f":did_{i}" for i in range(len(device_ids))])
+        params = {f"did_{i}": did for i, did in enumerate(device_ids)}
+        avg_data = db.execute(
+            text(f"""
+                SELECT
+                    AVG(temperature_air) AS avg_temperature_air,
+                    AVG(humidity_air) AS avg_humidity_air,
+                    AVG(soil_moisture) AS avg_soil_moisture,
+                    AVG(soil_ph) AS avg_soil_ph,
+                    AVG(nitrogen) AS avg_nitrogen,
+                    AVG(phosphorus) AS avg_phosphorus,
+                    AVG(potassium) AS avg_potassium
+                FROM SensorReadings
+                WHERE device_id IN ({placeholders})
+            """),
+            params
+        ).mappings().first()
+
+    return web_schemas.WebReportSummary(
+        total_fields=total_fields,
+        total_devices=total_devices,
+        total_irrigation_events=total_irrigation,
+        avg_temperature_air=avg_data["avg_temperature_air"] if avg_data else None,
+        avg_humidity_air=avg_data["avg_humidity_air"] if avg_data else None,
+        avg_soil_moisture=avg_data["avg_soil_moisture"] if avg_data else None,
+        avg_soil_ph=avg_data["avg_soil_ph"] if avg_data else None,
+        avg_nitrogen=avg_data["avg_nitrogen"] if avg_data else None,
+        avg_phosphorus=avg_data["avg_phosphorus"] if avg_data else None,
+        avg_potassium=avg_data["avg_potassium"] if avg_data else None,
+    )
+
+
+@webapp_router.post("/reports/field")
+def web_report_field(
+    data: web_schemas.WebReportFieldRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    field = db.execute(
+        text("""
+            SELECT f.field_id, f.name
+            FROM Fields f
+            JOIN Farms fa ON f.farm_id = fa.farm_id
+            WHERE f.field_id = :fid AND fa.user_id = :uid
+        """),
+        {"fid": data.field_id, "uid": uid}
+    ).mappings().first()
+
+    if not field:
+        raise HTTPException(status_code=404, detail="Field not found")
+
+    device_ids = _get_device_ids_for_fields([data.field_id], db)
+    devices_count = len(device_ids)
+
+    avg_data = None
+    if device_ids:
+        placeholders = ", ".join([f":did_{i}" for i in range(len(device_ids))])
+        params = {f"did_{i}": did for i, did in enumerate(device_ids)}
+        avg_data = db.execute(
+            text(f"""
+                SELECT
+                    AVG(temperature_air) AS avg_temperature_air,
+                    AVG(humidity_air) AS avg_humidity_air,
+                    AVG(soil_moisture) AS avg_soil_moisture,
+                    AVG(soil_ph) AS avg_soil_ph,
+                    AVG(nitrogen) AS avg_nitrogen,
+                    AVG(phosphorus) AS avg_phosphorus,
+                    AVG(potassium) AS avg_potassium,
+                    AVG(conductivity) AS avg_conductivity,
+                    AVG(light_intensity) AS avg_light_intensity,
+                    AVG(co2) AS avg_co2
+                FROM SensorReadings
+                WHERE device_id IN ({placeholders})
+            """),
+            params
+        ).mappings().first()
+
+    last_irr = db.execute(
+        text("""
+            SELECT start_time FROM IrrigationEvents
+            WHERE field_id = :fid AND start_time <= NOW()
+            ORDER BY start_time DESC LIMIT 1
+        """),
+        {"fid": data.field_id}
+    ).mappings().first()
+
+    irr_30d = db.execute(
+        text("""
+            SELECT COUNT(*) as c FROM IrrigationEvents
+            WHERE field_id = :fid AND start_time >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+        """),
+        {"fid": data.field_id}
+    ).mappings().first()
+
+    return web_schemas.WebFieldReport(
+        field_id=field["field_id"],
+        field_name=field["name"],
+        devices_count=devices_count,
+        avg_temperature_air=avg_data["avg_temperature_air"] if avg_data else None,
+        avg_humidity_air=avg_data["avg_humidity_air"] if avg_data else None,
+        avg_soil_moisture=avg_data["avg_soil_moisture"] if avg_data else None,
+        avg_soil_ph=avg_data["avg_soil_ph"] if avg_data else None,
+        avg_nitrogen=avg_data["avg_nitrogen"] if avg_data else None,
+        avg_phosphorus=avg_data["avg_phosphorus"] if avg_data else None,
+        avg_potassium=avg_data["avg_potassium"] if avg_data else None,
+        avg_conductivity=avg_data["avg_conductivity"] if avg_data else None,
+        avg_light_intensity=avg_data["avg_light_intensity"] if avg_data else None,
+        avg_co2=avg_data["avg_co2"] if avg_data else None,
+        last_irrigation=last_irr["start_time"] if last_irr else None,
+        irrigation_30d_count=irr_30d["c"] if irr_30d else 0,
+    )
+
+
+@webapp_router.post("/sensors/latest")
+def web_sensors_latest(
+    data: web_schemas.WebSensorsLatestRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    farm_ids = _get_farm_ids_for_user(uid, db)
+    field_ids = []
+    device_ids = []
+
+    if data.device_id:
+        device_ids = [data.device_id]
+    elif data.farm_id:
+        if data.farm_id not in farm_ids:
+            raise HTTPException(status_code=403, detail="Farm not accessible")
+        field_ids = _get_field_ids_for_farms([data.farm_id], db)
+        device_ids = _get_device_ids_for_fields(field_ids, db)
+    else:
+        field_ids = _get_field_ids_for_farms(farm_ids, db)
+        device_ids = _get_device_ids_for_fields(field_ids, db)
+
+    if not device_ids:
+        return {"readings": []}
+
+    results = []
+    for did in device_ids:
+        row = db.execute(
+            text("""
+                SELECT * FROM SensorReadings
+                WHERE device_id = :did
+                ORDER BY timestamp DESC LIMIT 1
+            """),
+            {"did": did}
+        ).mappings().first()
+        if row:
+            results.append(web_schemas.WebSensorData(
+                reading_id=row.get("reading_id"),
+                device_id=row["device_id"],
+                timestamp=row.get("timestamp"),
+                temperature_air=row.get("temperature_air"),
+                humidity_air=row.get("humidity_air"),
+                temperature_soil=row.get("temperature_soil"),
+                humidity_soil=row.get("humidity_soil"),
+                soil_moisture=row.get("soil_moisture"),
+                soil_ph=row.get("soil_ph"),
+                nitrogen=row.get("nitrogen"),
+                phosphorus=row.get("phosphorus"),
+                potassium=row.get("potassium"),
+                conductivity=row.get("conductivity"),
+                light_intensity=row.get("light_intensity"),
+                co2=row.get("co2"),
+                battery_level=row.get("battery_level"),
+            ))
+
+    return {"readings": results}
+
+
+# =========================================================
+# AI Chat Endpoints (AgroAssist)
+# =========================================================
+
+import json as _json
+import httpx as _httpx
+
+_CLOUDFLARE_AI_ACCOUNT_ID = os.environ.get("CLOUDFLARE_AI_ACCOUNT_ID", "")
+_CLOUDFLARE_AI_API_TOKEN = os.environ.get("CLOUDFLARE_AI_API_TOKEN", "")
+_CLOUDFLARE_AI_MODEL = os.environ.get(
+    "CLOUDFLARE_AI_MODEL", "@cf/qwen/qwen3-30b-a3b-fp8"
+)
+_CLOUDFLARE_AI_URL = (
+    f"https://api.cloudflare.com/client/v4/accounts/"
+    f"{_CLOUDFLARE_AI_ACCOUNT_ID}/ai/run/{_CLOUDFLARE_AI_MODEL}"
+)
+_AI_HEADERS = {
+    "Authorization": f"Bearer {_CLOUDFLARE_AI_API_TOKEN}",
+    "Content-Type": "application/json",
+}
+
+_MAX_FARMS = 3
+_MAX_FIELDS_PER_FARM = 3
+_MAX_DEVICES_PER_FIELD = 5
+
+
+def _ai_build_db_snapshot(uid: int, db: Session) -> str:
+    try:
+        farms = db.execute(
+            text("SELECT farm_id, name FROM Farms WHERE user_id = :uid"),
+            {"uid": uid},
+        ).mappings().all()
+        if not farms:
+            return "No greenhouses found for this user."
+
+        lines = [f"User has {len(farms)} greenhouses:"]
+        for i, farm in enumerate(farms):
+            if i >= _MAX_FARMS:
+                lines.append(f"- ... and {len(farms) - i} more greenhouses")
+                break
+            farm_name = (farm["name"] or f"Greenhouse {farm['farm_id']}").strip()
+            lines.append(f"- Greenhouse: {farm_name}")
+
+            fields = db.execute(
+                text(
+                    "SELECT field_id, name, crop_type FROM Fields WHERE farm_id = :fid"
+                ),
+                {"fid": farm["farm_id"]},
+            ).mappings().all()
+
+            if not fields:
+                lines.append("  - No fields")
+                continue
+
+            for j, field in enumerate(fields):
+                if j >= _MAX_FIELDS_PER_FARM:
+                    lines.append(f"  - ... and {len(fields) - j} more fields")
+                    break
+                field_name = (field["name"] or f"Field {field['field_id']}").strip()
+                crop = (field["crop_type"] or "").strip()
+                crop_label = f" (crop: {crop})" if crop else ""
+                lines.append(f"  - Field: {field_name}{crop_label}")
+
+                devices = db.execute(
+                    text(
+                        "SELECT device_id, device_type, serial_number "
+                        "FROM Devices WHERE field_id = :fid"
+                    ),
+                    {"fid": field["field_id"]},
+                ).mappings().all()
+
+                if not devices:
+                    lines.append("    - Devices: none")
+                    continue
+
+                for k, device in enumerate(devices):
+                    if k >= _MAX_DEVICES_PER_FIELD:
+                        lines.append(
+                            f"    - ... and {len(devices) - k} more devices"
+                        )
+                        break
+                    dtype = (device["device_type"] or "Device").strip()
+                    serial = (device["serial_number"] or "").strip()
+                    serial_label = f" (serial: {serial})" if serial else ""
+                    lines.append(
+                        f"    - Device: {dtype} #{device['device_id']}{serial_label}"
+                    )
+
+        return "\n".join(lines)
+    except Exception as exc:
+        logger.warning("build_db_snapshot error: %s", exc)
+        return "Database snapshot unavailable."
+
+
+def _ai_build_system_prompt(user_name: str, db_snapshot: str) -> str:
+    name = (user_name or "User").strip() or "User"
+    return (
+        "You are AgroAssist, an AI assistant inside the AgroEye agriculture system.\n"
+        "\n"
+        f'Your role is to help the user named "{name}" with general questions, '
+        "with strong expertise in agriculture and smart farming.\n"
+        "\n"
+        "Guidelines:\n"
+        "- Be concise, clear, and practical.\n"
+        "- Use simple language unless more detail is needed.\n"
+        "- Prioritize accurate, real-world agricultural knowledge.\n"
+        "- Don't use emojis at all, only words.\n"
+        "- Don't say hello more than one time per session; avoid repeated greetings.\n"
+        "- Answer must be in the same language as user input.\n"
+        "- Use the name of the user mentioned above for better communication.\n"
+        "- DON'T ANSWER ANYTHING EXCEPT AGRICULTURE RELATED QUESTIONS.\n"
+        "\n"
+        "Behavior:\n"
+        "- Provide confident and reliable answers, especially for agriculture topics.\n"
+        "- Base answers on trusted agricultural knowledge and best practices.\n"
+        "- Use the provided context (sensor readings, environment data, "
+        "and system details) to inform your answers.\n"
+        "- Always consider the full context before responding.\n"
+        "- Do not repeat greetings in every message.\n"
+        "- If the request is unclear or missing details, ask for clarification.\n"
+        "- Do not make up facts or uncertain information.\n"
+        "\n"
+        "Context Input:\n"
+        "You may receive structured data along with the user message, such as:\n"
+        "- Environmental conditions\n"
+        "- System status or device data\n"
+        "- Database Snapshot (user farms hierarchy)\n"
+        "\n"
+        "Database Snapshot:\n"
+        f"{db_snapshot or 'No database context available.'}\n"
+        "\n"
+        "Use this information as background context to improve accuracy and relevance.\n"
+        "\n"
+        "Context:\n"
+        "- You are part of a smart system, so responses should be structured "
+        "and useful inside an app.\n"
+        "- When relevant, suggest practical next steps or actions.\n"
+        "\n"
+        "Goal:\n"
+        "Provide clear, accurate, and actionable answers with confidence.\n"
+        "\n"
+        "Understand user input intent clearly and respond accordingly."
+    )
+
+
+def _ai_build_suggestion_instruction() -> str:
+    return (
+        "You are generating follow-up suggestions for the user.\n"
+        "Return ONLY valid JSON (no markdown, no code fences).\n"
+        'Return a JSON array of exactly 3 objects with keys: title, subtitle, prompt.\n'
+        "Keep them short and directly related to the user's last message."
+    )
+
+
+def _ai_parse_suggestions(content: str) -> list:
+    try:
+        trimmed = content.strip()
+        start = trimmed.find("[")
+        end = trimmed.rfind("]")
+        if start != -1 and end != -1 and end > start:
+            trimmed = trimmed[start : end + 1]
+        decoded = _json.loads(trimmed)
+        if not isinstance(decoded, list):
+            return []
+        result = []
+        for raw in decoded:
+            if not isinstance(raw, dict):
+                continue
+            title = (raw.get("title") or "").strip()
+            subtitle = (raw.get("subtitle") or "").strip()
+            prompt = (raw.get("prompt") or "").strip()
+            if title and prompt:
+                result.append(
+                    {"title": title, "subtitle": subtitle, "prompt": prompt}
+                )
+        return result
+    except Exception:
+        return []
+
+
+# ── Synchronous Ask ──
+
+
+@webapp_router.post("/ai/ask")
+def web_ai_ask(
+    data: web_schemas.WebAIAssistRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    question = (data.question or "").strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="Question is required")
+
+    user_row = db.execute(
+        text("SELECT username, email FROM Users WHERE user_id = :uid"),
+        {"uid": uid},
+    ).mappings().first()
+    user_name = (user_row["username"] or user_row["email"].split("@")[0] or "User") if user_row else "User"
+
+    db_snapshot = data.dbSnapshot or _ai_build_db_snapshot(uid, db)
+    system_prompt = _ai_build_system_prompt(user_name, db_snapshot)
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": question},
+    ]
+
+    try:
+        with _httpx.Client(timeout=_httpx.Timeout(120.0)) as client:
+            resp = client.post(
+                _CLOUDFLARE_AI_URL,
+                json={"messages": messages},
+                headers=_AI_HEADERS,
+            )
+            resp.raise_for_status()
+            body = resp.json()
+    except Exception as exc:
+        logger.error("AI ask error: %s", exc)
+        raise HTTPException(status_code=502, detail="AI service unavailable")
+
+    answer = (
+        body.get("result", {})
+        .get("choices", [{}])[0]
+        .get("message", {})
+        .get("content")
+        or body.get("result", {}).get("response")
+        or "No response"
+    )
+
+    return {
+        "answer": answer,
+        "type": "agro_assist_response",
+        "meta": {
+            "user": user_name,
+            "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+        },
+    }
+
+
+# ── Streaming Ask ──
+
+
+@webapp_router.post("/ai/ask-stream")
+async def web_ai_ask_stream(
+    data: web_schemas.WebAIAssistRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    question = (data.question or "").strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="Question is required")
+
+    user_row = db.execute(
+        text("SELECT username, email FROM Users WHERE user_id = :uid"),
+        {"uid": uid},
+    ).mappings().first()
+    user_name = (user_row["username"] or user_row["email"].split("@")[0] or "User") if user_row else "User"
+
+    db_snapshot = data.dbSnapshot or _ai_build_db_snapshot(uid, db)
+    system_prompt = _ai_build_system_prompt(user_name, db_snapshot)
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": question},
+    ]
+
+    async def _event_stream():
+        full_answer = ""
+        try:
+            async with _httpx.AsyncClient(timeout=_httpx.Timeout(120.0)) as client:
+                async with client.stream(
+                    "POST",
+                    _CLOUDFLARE_AI_URL,
+                    json={"messages": messages, "stream": True},
+                    headers=_AI_HEADERS,
+                ) as resp:
+                    buffer = ""
+                    async for chunk in resp.aiter_bytes():
+                        if await request.is_disconnected():
+                            yield f"data: {_json.dumps({'type': 'cancelled'})}\n\n"
+                            return
+
+                        buffer += chunk.decode()
+                        lines = buffer.split("\n")
+                        buffer = lines.pop() if lines else ""
+
+                        for line in lines:
+                            trimmed = line.strip()
+                            if not trimmed or trimmed == "data: [DONE]":
+                                continue
+
+                            token = None
+                            if trimmed.startswith("data: "):
+                                try:
+                                    parsed = _json.loads(trimmed[6:])
+                                    token = parsed.get("response")
+                                except _json.JSONDecodeError:
+                                    pass
+                            else:
+                                try:
+                                    parsed = _json.loads(trimmed)
+                                    token = parsed.get("response")
+                                except _json.JSONDecodeError:
+                                    pass
+
+                            if token:
+                                full_answer += token
+                                yield f"data: {_json.dumps({'type': 'token', 'content': token})}\n\n"
+
+            if not await request.is_disconnected():
+                yield f"data: {_json.dumps({'type': 'done'})}\n\n"
+                yield (
+                    f"data: {_json.dumps({'type': 'answer', 'data': {
+                        'answer': full_answer,
+                        'type': 'agro_assist_response',
+                        'meta': {
+                            'user': user_name,
+                            'timestamp': int(
+                                datetime.now(timezone.utc).timestamp() * 1000
+                            ),
+                        },
+                    }})}\n\n"
+                )
+        except Exception as exc:
+            logger.error("AI stream error: %s", exc)
+            try:
+                yield f"data: {_json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+            except Exception:
+                pass
+
+    return StreamingResponse(
+        _event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ── Suggestions ──
+
+
+@webapp_router.post("/ai/suggestions")
+def web_ai_suggestions(
+    data: web_schemas.WebAISuggestionsRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    user_text = (data.userText or "").strip()
+    if not user_text:
+        return {"suggestions": []}
+
+    user_row = db.execute(
+        text("SELECT username, email FROM Users WHERE user_id = :uid"),
+        {"uid": uid},
+    ).mappings().first()
+    user_name = (user_row["username"] or user_row["email"].split("@")[0] or "User") if user_row else "User"
+
+    db_snapshot = data.dbSnapshot or _ai_build_db_snapshot(uid, db)
+    system_prompt = _ai_build_system_prompt(user_name, db_snapshot)
+    suggestion_prompt = _ai_build_suggestion_instruction()
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "system", "content": suggestion_prompt},
+        {"role": "user", "content": user_text},
+    ]
+
+    try:
+        with _httpx.Client(timeout=_httpx.Timeout(30.0)) as client:
+            resp = client.post(
+                _CLOUDFLARE_AI_URL,
+                json={"messages": messages},
+                headers=_AI_HEADERS,
+            )
+            resp.raise_for_status()
+            body = resp.json()
+    except Exception as exc:
+        logger.error("AI suggestions error: %s", exc)
+        return {"suggestions": []}
+
+    content = (
+        body.get("result", {})
+        .get("choices", [{}])[0]
+        .get("message", {})
+        .get("content")
+        or body.get("result", {}).get("response")
+        or ""
+    )
+
+    suggestions = _ai_parse_suggestions(content)
+    return {"suggestions": suggestions}
+
+
+app.include_router(webapp_router)
 

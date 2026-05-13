@@ -21,19 +21,19 @@ import { ScrollArea } from "../../components/ui/scroll-area";
 import type { FieldSummary } from "../../types/domain";
 
 export function OverviewPage() {
-  const { farms, fields, devices, nodeStatuses, activeFarmId, loading } = useAppData();
+  const { farms, fields, devices, nodeStatuses, activeFarmId, dashboardData, dashboardLoading, loading } = useAppData();
   const [summaries, setSummaries] = useState<Record<number, FieldSummary>>({});
   const [summariesLoading, setSummariesLoading] = useState(false);
   const cacheRef = useRef<Record<number, FieldSummary>>({});
 
   const activeFarm = farms.find((f) => f.farm_id === activeFarmId);
 
-  const totalFields = fields.length;
-  const onlineDevices = devices.filter((d) => d.status === "online").length;
-  const totalNodes = Object.values(nodeStatuses).reduce((sum, s) => sum + s.total_nodes, 0);
-  const activeNodes = Object.values(nodeStatuses).reduce((sum, s) => sum + s.active, 0);
-  const lowBatteryNodes = Object.values(nodeStatuses).reduce((sum, s) => sum + s.low_battery, 0);
-  const alertsCount = Object.values(nodeStatuses).reduce(
+  const totalFields = dashboardData?.total_fields ?? fields.length;
+  const onlineDevices = dashboardData?.active_devices ?? devices.filter((d) => d.status === "online").length;
+  const totalNodes = dashboardData?.total_nodes ?? Object.values(nodeStatuses).reduce((sum, s) => sum + s.total_nodes, 0);
+  const activeNodes = dashboardData?.active_nodes ?? Object.values(nodeStatuses).reduce((sum, s) => sum + s.active, 0);
+  const lowBatteryNodes = dashboardData?.low_battery_nodes ?? Object.values(nodeStatuses).reduce((sum, s) => sum + s.low_battery, 0);
+  const alertsCount = dashboardData?.alerts_count ?? Object.values(nodeStatuses).reduce(
     (sum, s) => sum + s.low_battery + s.offline + s.inactive,
     0
   );
@@ -215,12 +215,12 @@ export function OverviewPage() {
 
         {/* Right column */}
         <div className="space-y-6">
-          {/* D. AI Insights Panel */}
+          {/* D. AgroAssist Panel */}
           <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <ScanLine className="h-4 w-4 text-emerald-500" />
-                AI Insights
+                AgroAssist
               </CardTitle>
               <CardDescription>Disease detection summary</CardDescription>
             </CardHeader>

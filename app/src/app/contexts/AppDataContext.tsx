@@ -3,6 +3,19 @@ import { api } from "../lib/api";
 import { useAuth } from "./AuthContext";
 import type { Farm, Field, Device, NotificationItem, NodeStatusSummary } from "../types/domain";
 
+interface DashboardData {
+  total_fields: number;
+  total_devices: number;
+  active_devices: number;
+  total_nodes: number;
+  active_nodes: number;
+  low_battery_nodes: number;
+  alerts_count: number;
+  unread_notifications: number;
+  today_irrigation_events: number;
+  today_irrigation_duration_minutes: number;
+}
+
 interface AppDataState {
   farms: Farm[];
   fields: Field[];
@@ -11,11 +24,14 @@ interface AppDataState {
   notifications: NotificationItem[];
   nodeStatuses: Record<number, NodeStatusSummary>;
   unreadCount: number;
+  dashboardData: DashboardData | null;
+  dashboardLoading: boolean;
   loading: boolean;
   setActiveFarmId: (id: number) => void;
   refreshFarms: () => Promise<void>;
   refreshFields: (farmId: number) => Promise<void>;
   refreshNotifications: () => Promise<void>;
+  refreshDashboard: () => Promise<void>;
   markNotificationAsRead: (id: number) => Promise<void>;
 }
 
@@ -36,6 +52,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   });
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [nodeStatuses, setNodeStatuses] = useState<Record<number, NodeStatusSummary>>({});
+  const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
+  const [dashboardLoading, setDashboardLoading] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const unreadCount = notifications.filter((n) => n.is_read === 0).length;
@@ -104,6 +122,19 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     }
   }, [user, activeFarmId]);
 
+  const refreshDashboard = useCallback(async () => {
+    if (!activeFarmId) return;
+    setDashboardLoading(true);
+    try {
+      const data = await api.web.dashboard(activeFarmId);
+      setDashboardData(data);
+    } catch (err) {
+      console.error("Failed to fetch dashboard data:", err);
+    } finally {
+      setDashboardLoading(false);
+    }
+  }, [activeFarmId]);
+
   const markNotificationAsRead = useCallback(async (id: number) => {
     try {
       await api.home.markNotificationRead(id);
@@ -130,8 +161,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     if (activeFarmId) {
       refreshFields(activeFarmId);
       refreshNotifications();
+      refreshDashboard();
     }
-  }, [activeFarmId, refreshFields, refreshNotifications]);
+  }, [activeFarmId, refreshFields, refreshNotifications, refreshDashboard]);
 
   return (
     <AppDataContext.Provider
@@ -143,11 +175,14 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         notifications,
         nodeStatuses,
         unreadCount,
+        dashboardData,
+        dashboardLoading,
         loading,
         setActiveFarmId,
         refreshFarms,
         refreshFields,
         refreshNotifications,
+        refreshDashboard,
         markNotificationAsRead,
       }}
     >

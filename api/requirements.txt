@@ -1,4 +1,5 @@
 fastapi>=0.110
+httpx>=0.27
 uvicorn>=0.29
 pydantic>=2.6
 ultralytics>=8.0

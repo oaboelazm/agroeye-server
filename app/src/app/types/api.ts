@@ -17,3 +17,57 @@ export interface SignupResponse {
   status: string;
   message: string;
 }
+
+export interface AIAskResponse {
+  answer: string;
+  type: string;
+  meta: {
+    user: string;
+    timestamp: number;
+  };
+}
+
+export interface AISuggestion {
+  title: string;
+  subtitle: string;
+  prompt: string;
+}
+
+export interface AISuggestionsResponse {
+  suggestions: AISuggestion[];
+}
+
+export interface ScanImage {
+  image_id: string;
+  device_id: number;
+  field_id: number;
+  image_path: string;
+  capture_timestamp: string;
+  file_size: number | null;
+}
+
+export interface ScanAnalysis {
+  result_id: number;
+  image_id: string;
+  disease_detected: string | null;
+  confidence_score: number | null;
+  recommendation: string | null;
+  analysis_timestamp: string | null;
+}
+
+export interface ScanHistoryItem extends ScanImage {
+  result_id?: number | null;
+  disease_detected?: string | null;
+  confidence_score?: number | null;
+  recommendation?: string | null;
+  analysis_timestamp?: string | null;
+}
+
+export interface ScanHistoryResponse {
+  history: ScanHistoryItem[];
+}
+
+export interface ScanDetailsResponse {
+  image: ScanImage | null;
+  analysis: ScanAnalysis | null;
+}

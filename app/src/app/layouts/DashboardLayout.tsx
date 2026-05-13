@@ -74,7 +74,7 @@ const SIDEBAR_ITEMS: { icon: React.ElementType; label: string; key: PageKey }[] 
   { icon: Cpu, label: "Devices", key: "devices" },
   { icon: FileText, label: "Reports", key: "reports" },
   { icon: LineChart, label: "Analytics", key: "analytics" },
-  { icon: Bot, label: "AI Insights", key: "ai-assistant" },
+  { icon: Bot, label: "AgroAssist", key: "ai-assistant" },
   { icon: ScanLine, label: "Scans", key: "scans" },
   { icon: Bell, label: "Notifications", key: "notifications" },
   { icon: Settings, label: "Settings", key: "settings" },

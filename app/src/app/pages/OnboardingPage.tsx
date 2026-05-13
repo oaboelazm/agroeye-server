@@ -39,7 +39,7 @@ const STEPS = [
   },
   {
     id: "ai",
-    title: "AI Insights",
+    title: "AgroAssist",
     description: "Your platform comes with an AI copilot that analyzes sensor data, predicts disease patterns, and optimizes irrigation schedules.",
     icon: Bot,
     color: "text-purple-500",
