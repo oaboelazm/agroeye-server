@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, typ
 import { api } from "../lib/api";
 import { useAuth } from "./AuthContext";
 import type { Farm, Field, Device, NotificationItem, NodeStatusSummary } from "../types/domain";
+import type { Farm as ApiFarm } from "../types/api";
 
 interface DashboardData {
   total_fields: number;
@@ -69,10 +70,19 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     if (!user) return;
     setLoading(true);
     try {
-      const res = await api.home.getFarms(user.user_id);
-      setFarms(res.farms);
-      if (res.farms.length > 0 && !activeFarmId) {
-        setActiveFarmId(res.farms[0].farm_id);
+      const res = await api.web.listFarms();
+      const mapped: Farm[] = (res.farms || []).map((f: ApiFarm) => ({
+        farm_id: f.farm_id,
+        name: f.name,
+        location: f.location || "",
+        area_size: f.area_size || 0,
+        created_at: f.created_at,
+        is_Archived: f.is_Archived,
+        deleted_at: f.deleted_at,
+      }));
+      setFarms(mapped);
+      if (mapped.length > 0 && !activeFarmId) {
+        setActiveFarmId(mapped[0].farm_id);
       }
     } catch (err) {
       console.error("Failed to fetch farms:", err);

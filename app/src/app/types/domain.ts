@@ -3,6 +3,9 @@ export interface Farm {
   name: string;
   location: string;
   area_size: number;
+  created_at?: string;
+  is_Archived?: number;
+  deleted_at?: string | null;
 }
 
 export interface Field {

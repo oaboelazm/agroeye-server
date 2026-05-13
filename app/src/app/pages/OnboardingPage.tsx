@@ -32,7 +32,7 @@ const STEPS = [
   {
     id: "analytics",
     title: "Monitoring & Analytics",
-    description: "View real-time telemetry, historical trends, irrigation events, and AI-powered disease detection insights.",
+    description: "View real-time telemetry, historical trends, events, and AI-powered disease detection insights.",
     icon: LineChart,
     color: "text-indigo-500",
     bg: "bg-indigo-500/10",
@@ -40,7 +40,7 @@ const STEPS = [
   {
     id: "ai",
     title: "AgroAssist",
-    description: "Your platform comes with an AI copilot that analyzes sensor data, predicts disease patterns, and optimizes irrigation schedules.",
+    description: "Your platform comes with an AI copilot that analyzes sensor data, predicts disease patterns, and optimizes event schedules.",
     icon: Bot,
     color: "text-purple-500",
     bg: "bg-purple-500/10",

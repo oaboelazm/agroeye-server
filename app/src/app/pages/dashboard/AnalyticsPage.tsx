@@ -58,7 +58,7 @@ export function AnalyticsPage() {
       <Tabs defaultValue="sensors" className="space-y-6">
         <TabsList className="bg-muted/50 p-1 border border-border/50">
           <TabsTrigger value="sensors">Sensor Trends</TabsTrigger>
-          <TabsTrigger value="irrigation">Irrigation</TabsTrigger>
+          <TabsTrigger value="irrigation">Events</TabsTrigger>
         </TabsList>
 
         <TabsContent value="sensors" className="space-y-6">
@@ -94,11 +94,11 @@ export function AnalyticsPage() {
         <TabsContent value="irrigation">
           <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
             <CardHeader>
-              <CardTitle>Irrigation Events</CardTitle>
-              <CardDescription>Irrigation history and water usage</CardDescription>
+              <CardTitle>Events</CardTitle>
+              <CardDescription>Event history and details</CardDescription>
             </CardHeader>
             <CardContent>
-              <p className="text-sm text-muted-foreground text-center py-12">Irrigation data will appear here once events are recorded.</p>
+              <p className="text-sm text-muted-foreground text-center py-12">Event data will appear here once events are recorded.</p>
             </CardContent>
           </Card>
         </TabsContent>

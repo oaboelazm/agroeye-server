@@ -1,3 +1,5 @@
+import type { Farm, ScanHistoryResponse, ScanDetailsResponse, ChatSession, ChatSessionMessage } from "../types/api";
+
 const BASE_URL = "/api";
 
 let logoutHandler: (() => void) | null = null;
@@ -185,6 +187,25 @@ export const api = {
       }>("/mobile/reports/get-summary", { field_id: fieldId }),
   },
 
+  imageUrl: (filename: string) => {
+    const token = getToken();
+    return `${BASE_URL}/webapp/images/${encodeURIComponent(filename)}?token=${token || ""}`;
+  },
+
+  fetchImageAsBlob: async (filename: string): Promise<string | null> => {
+    const token = getToken();
+    try {
+      const res = await fetch(`${BASE_URL}/webapp/images/${encodeURIComponent(filename)}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) return null;
+      const blob = await res.blob();
+      return URL.createObjectURL(blob);
+    } catch {
+      return null;
+    }
+  },
+
   scan: {
     upload: (deviceId: number, fieldId: number, file: File) => {
       const fd = new FormData();
@@ -325,6 +346,17 @@ export const api = {
         suggestions: Array<{ title: string; subtitle: string; prompt: string }>;
       }>("/webapp/ai/suggestions", data),
 
+    rescan: (imageId: string, returnAnnotated?: boolean) =>
+      request<{
+        status: string;
+        image_id: string;
+        detections: Array<{ label: string; confidence: number; bbox_xyxy: number[] }>;
+        max_confidence: number;
+        count: number;
+        analysis: { disease_detected: string; confidence_score: number; recommendation: string };
+        annotated_image_base64?: string;
+      }>("/webapp/ai/vision/rescan", { image_id: imageId, return_annotated: returnAnnotated ?? false }),
+
     listSessions: () =>
       request<{ sessions: ChatSession[] }>("/webapp/ai/sessions/list", {}),
 
@@ -343,6 +375,20 @@ export const api = {
   },
 
   web: {
+    listFarms: () =>
+      request<{ farms: Farm[] }>("/webapp/farms/list", {}),
+
+    archiveFarm: (farmId: number) =>
+      request<{ status: string; message: string }>("/webapp/farms/archive", { farm_id: farmId }),
+
+    unarchiveFarm: (farmId: number) =>
+      request<{ status: string; message: string }>("/webapp/farms/unarchive", { farm_id: farmId }),
+
+    deleteFarm: (farmId: number) =>
+      request<{ status: string; message: string }>("/webapp/farms/delete", { farm_id: farmId }),
+
+    archivedFarms: () =>
+      request<{ farms: Farm[] }>("/webapp/farms/archived-list", {}),
     dashboard: (farmId?: number) =>
       request<{
         total_fields: number;

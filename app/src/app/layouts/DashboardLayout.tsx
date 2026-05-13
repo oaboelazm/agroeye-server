@@ -69,7 +69,7 @@ const PAGES: Record<PageKey, React.ComponentType> = {
 
 const SIDEBAR_ITEMS: { icon: React.ElementType; label: string; key: PageKey }[] = [
   { icon: LayoutDashboard, label: "Dashboard", key: "overview" },
-  { icon: Grid3X3, label: "Farms", key: "farms" },
+  { icon: Grid3X3, label: "Green Houses", key: "farms" },
   { icon: Wheat, label: "Fields", key: "fields" },
   { icon: Cpu, label: "Devices", key: "devices" },
   { icon: FileText, label: "Reports", key: "reports" },

@@ -6,7 +6,7 @@ import { ScrollArea } from "../../components/ui/scroll-area";
 import { useAppData } from "../../contexts/AppDataContext";
 import { api } from "../../lib/api";
 import type { ScanHistoryItem } from "../../types/api";
-import { ScanLine, AlertCircle, Leaf } from "lucide-react";
+import { ScanLine, AlertCircle, Leaf, RotateCcw, ImageIcon } from "lucide-react";
 
 export function ScansPage() {
   const { fields } = useAppData();
@@ -14,6 +14,8 @@ export function ScansPage() {
   const [scans, setScans] = useState<ScanHistoryItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [rescanningId, setRescanningId] = useState<string | null>(null);
+  const [annotatedImages, setAnnotatedImages] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (fields.length > 0 && selectedFieldId === null) {
@@ -28,6 +30,7 @@ export function ScansPage() {
     try {
       const res = await api.scan.history(selectedFieldId);
       setScans(res.history || []);
+      setAnnotatedImages({});
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load scans");
       setScans([]);
@@ -39,6 +42,25 @@ export function ScansPage() {
   useEffect(() => {
     fetchScans();
   }, [fetchScans]);
+
+  const handleRescan = async (scan: ScanHistoryItem) => {
+    if (!scan.image_id) return;
+    setRescanningId(scan.image_id);
+    try {
+      const res = await api.ai.rescan(scan.image_id, true);
+      if (res.annotated_image_base64) {
+        setAnnotatedImages((prev) => ({
+          ...prev,
+          [scan.image_id]: `data:image/jpeg;base64,${res.annotated_image_base64}`,
+        }));
+      }
+      await fetchScans();
+    } catch {
+      // ignore
+    } finally {
+      setRescanningId(null);
+    }
+  };
 
   const confidenceColor = (score: number | null) => {
     if (score == null) return "text-muted-foreground";
@@ -103,53 +125,98 @@ export function ScansPage() {
             </Card>
           ) : (
             <ScrollArea className="h-[calc(100vh-280px)]">
-              <div className="grid gap-4 pr-4">
+              <div className="grid gap-6 pr-4">
                 {scans.map((scan) => (
-                  <Card key={scan.image_id} className="border-border/50 bg-card/50">
-                    <CardHeader className="pb-3">
-                      <div className="flex items-start justify-between">
-                        <div>
-                          <CardTitle className="text-base flex items-center gap-2">
-                            <ScanLine className="h-4 w-4 text-emerald-500" />
-                            Scan {scan.image_id.slice(0, 8)}...
-                          </CardTitle>
-                          <CardDescription>
-                            {new Date(scan.capture_timestamp).toLocaleString()}
-                            {scan.file_size ? ` · ${(scan.file_size / 1024).toFixed(1)} KB` : ""}
-                          </CardDescription>
-                        </div>
-                        {scan.disease_detected && (
-                          <Badge
-                            variant={isHealthy(scan.disease_detected) ? "secondary" : "destructive"}
-                            className="shrink-0"
-                          >
-                            {scan.disease_detected}
-                          </Badge>
+                  <Card key={scan.image_id} className="border-border/50 bg-card/50 overflow-hidden">
+                    <div className="flex flex-col md:flex-row">
+                      <div className="md:w-72 shrink-0 bg-muted/30 flex items-center justify-center">
+                        {scan.image_path ? (
+                          <img
+                            src={api.imageUrl(scan.image_path)}
+                            alt={`Scan ${scan.image_id.slice(0, 8)}`}
+                            className="w-full h-56 md:h-48 object-cover"
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).src = "";
+                              (e.target as HTMLImageElement).classList.add("hidden");
+                            }}
+                          />
+                        ) : (
+                          <div className="w-full h-56 md:h-48 flex items-center justify-center text-muted-foreground">
+                            <ImageIcon className="h-8 w-8" />
+                          </div>
                         )}
                       </div>
-                    </CardHeader>
-                    <CardContent>
-                      {scan.disease_detected ? (
-                        <div className="space-y-2">
-                          <div className="flex items-center gap-4 text-sm">
-                            <span className="text-muted-foreground">Confidence:</span>
-                            <span className={`font-medium ${confidenceColor(scan.confidence_score)}`}>
-                              {scan.confidence_score != null
-                                ? `${(scan.confidence_score * 100).toFixed(1)}%`
-                                : "N/A"}
-                            </span>
+                      <div className="flex-1 p-5">
+                        <CardHeader className="p-0 pb-3">
+                          <div className="flex items-start justify-between">
+                            <div>
+                              <CardTitle className="text-base flex items-center gap-2">
+                                <ScanLine className="h-4 w-4 text-emerald-500" />
+                                Scan {scan.image_id.slice(0, 8)}...
+                              </CardTitle>
+                              <CardDescription>
+                                {new Date(scan.capture_timestamp).toLocaleString()}
+                                {scan.file_size ? ` · ${(scan.file_size / 1024).toFixed(1)} KB` : ""}
+                              </CardDescription>
+                            </div>
+                            {scan.disease_detected && (
+                              <Badge
+                                variant={isHealthy(scan.disease_detected) ? "secondary" : "destructive"}
+                                className="shrink-0"
+                              >
+                                {scan.disease_detected}
+                              </Badge>
+                            )}
                           </div>
-                          {scan.recommendation && (
-                            <div className="text-sm text-muted-foreground">
-                              <span className="font-medium text-foreground">Recommendation:</span>{" "}
-                              {scan.recommendation}
+                        </CardHeader>
+                        <CardContent className="p-0">
+                          {scan.disease_detected ? (
+                            <div className="space-y-2">
+                              <div className="flex items-center gap-4 text-sm">
+                                <span className="text-muted-foreground">Confidence:</span>
+                                <span className={`font-medium ${confidenceColor(scan.confidence_score)}`}>
+                                  {scan.confidence_score != null
+                                    ? `${(scan.confidence_score * 100).toFixed(1)}%`
+                                    : "N/A"}
+                                </span>
+                              </div>
+                              {scan.recommendation && (
+                                <div className="text-sm text-muted-foreground">
+                                  <span className="font-medium text-foreground">Recommendation:</span>{" "}
+                                  {scan.recommendation}
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <p className="text-sm text-muted-foreground">Analysis pending</p>
+                          )}
+
+                          {annotatedImages[scan.image_id] && (
+                            <div className="mt-3">
+                              <p className="text-xs font-medium text-muted-foreground mb-2">Annotated result:</p>
+                              <img
+                                src={annotatedImages[scan.image_id]}
+                                alt="Annotated scan"
+                                className="max-h-48 rounded-lg border border-border/50 object-contain"
+                              />
                             </div>
                           )}
-                        </div>
-                      ) : (
-                        <p className="text-sm text-muted-foreground">Analysis pending</p>
-                      )}
-                    </CardContent>
+
+                          <div className="mt-4">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleRescan(scan)}
+                              disabled={rescanningId === scan.image_id}
+                              className="gap-2"
+                            >
+                              <RotateCcw className={`h-3.5 w-3.5 ${rescanningId === scan.image_id ? "animate-spin" : ""}`} />
+                              {rescanningId === scan.image_id ? "Rescanning..." : "Rescan"}
+                            </Button>
+                          </div>
+                        </CardContent>
+                      </div>
+                    </div>
                   </Card>
                 ))}
               </div>

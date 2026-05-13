@@ -13,7 +13,7 @@ from typing import Optional, Generator
 
 from fastapi import APIRouter, FastAPI, UploadFile, File, Form, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -1602,7 +1602,7 @@ def _get_user_id_from_token(token: str = Depends(oauth2_scheme)) -> int:
 
 def _get_farm_ids_for_user(uid: int, db: Session) -> list[int]:
     rows = db.execute(
-        text("SELECT farm_id FROM Farms WHERE user_id = :uid"),
+        text("SELECT farm_id FROM Farms WHERE user_id = :uid AND deleted_at IS NULL AND is_Archived = 0"),
         {"uid": uid}
     ).mappings().all()
     return [r["farm_id"] for r in rows]
@@ -2869,6 +2869,211 @@ def web_ai_add_message(
     )
     db.commit()
     return {"status": "ok"}
+
+
+# ── Image Serving ──
+
+
+@webapp_router.get("/images/{filename}")
+def web_serve_image(
+    filename: str,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    file_path = os.path.join(UPLOAD_DIR, filename)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Image not found")
+    return FileResponse(file_path)
+
+
+# ── Rescan (re-run vision AI) ──
+
+
+class WebRescanRequest(BaseModel):
+    image_id: str
+    return_annotated: bool = False
+
+
+@webapp_router.post("/ai/vision/rescan")
+async def web_ai_vision_rescan(
+    data: WebRescanRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    image = db.execute(
+        text("SELECT * FROM Images WHERE image_id = :iid"),
+        {"iid": data.image_id},
+    ).mappings().first()
+    if not image:
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    file_path = os.path.join(UPLOAD_DIR, image["image_path"])
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Image file not found on disk")
+
+    model = _get_vision_model()
+    results = model.predict(source=file_path, verbose=False)
+    result = results[0]
+
+    names = getattr(result, "names", None) or getattr(model, "names", {})
+    detections = []
+    confs = []
+    top_disease = "Unknown"
+    max_conf = 0.0
+    if result.boxes is not None and len(result.boxes) > 0:
+        xyxy = result.boxes.xyxy.tolist()
+        conf = result.boxes.conf.tolist()
+        cls_ids = result.boxes.cls.tolist()
+        for i in range(len(xyxy)):
+            cls_id = int(cls_ids[i])
+            label = names.get(cls_id, str(cls_id)) if isinstance(names, dict) else str(cls_id)
+            score = float(conf[i])
+            confs.append(score)
+            detections.append({"label": label, "confidence": score, "bbox_xyxy": [float(v) for v in xyxy[i]]})
+        max_conf = max(confs)
+        top_disease = detections[confs.index(max_conf)]["label"]
+
+    recommendation = _generate_recommendation(top_disease)
+    now_ts = datetime.now(timezone.utc)
+
+    db.execute(
+        text("""
+            INSERT INTO AIResults (image_id, disease_detected, confidence_score, recommendation, analysis_timestamp)
+            VALUES (:iid, :disease, :confidence, :recommendation, :ts)
+        """),
+        {
+            "iid": data.image_id,
+            "disease": top_disease,
+            "confidence": round(max_conf, 4),
+            "recommendation": recommendation,
+            "ts": now_ts,
+        },
+    )
+    db.commit()
+
+    response = {
+        "status": "ok",
+        "image_id": data.image_id,
+        "detections": detections,
+        "max_confidence": float(max_conf),
+        "count": len(detections),
+        "analysis": {
+            "disease_detected": top_disease,
+            "confidence_score": float(max_conf),
+            "recommendation": recommendation,
+        },
+    }
+
+    if data.return_annotated:
+        import cv2
+        annotated = result.plot()
+        ok, encoded = cv2.imencode(".jpg", annotated)
+        if ok:
+            response["annotated_image_base64"] = base64.b64encode(encoded.tobytes()).decode("utf-8")
+            response["annotated_image_format"] = "jpg"
+
+    return response
+
+
+# ── Webapp Farm Management (excludes deleted/archived) ──
+
+
+class WebFarmActionRequest(BaseModel):
+    farm_id: int
+
+
+class WebFarmCreateRequest(BaseModel):
+    name: str
+    location: str
+    area_size: float
+
+
+@webapp_router.post("/farms/list")
+def web_farms_list(
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    rows = db.execute(
+        text("""
+            SELECT farm_id, name, location, area_size, created_at, is_Archived, deleted_at
+            FROM Farms
+            WHERE user_id = :uid AND deleted_at IS NULL AND is_Archived = 0
+            ORDER BY created_at DESC
+        """),
+        {"uid": uid},
+    ).mappings().all()
+    return {"farms": [dict(r) for r in rows]}
+
+
+@webapp_router.post("/farms/archive")
+def web_farm_archive(
+    data: WebFarmActionRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    farm_ids = _get_farm_ids_for_user(uid, db)
+    if data.farm_id not in farm_ids:
+        raise HTTPException(status_code=403, detail="Farm not accessible")
+    db.execute(
+        text("UPDATE Farms SET is_Archived = 1 WHERE farm_id = :fid"),
+        {"fid": data.farm_id},
+    )
+    db.commit()
+    return {"status": "ok", "message": "Farm archived"}
+
+
+@webapp_router.post("/farms/unarchive")
+def web_farm_unarchive(
+    data: WebFarmActionRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    row = db.execute(
+        text("SELECT farm_id FROM Farms WHERE farm_id = :fid AND user_id = :uid AND deleted_at IS NULL"),
+        {"fid": data.farm_id, "uid": uid},
+    ).mappings().first()
+    if not row:
+        raise HTTPException(status_code=403, detail="Farm not accessible")
+    db.execute(
+        text("UPDATE Farms SET is_Archived = 0 WHERE farm_id = :fid"),
+        {"fid": data.farm_id},
+    )
+    db.commit()
+    return {"status": "ok", "message": "Farm unarchived"}
+
+
+@webapp_router.post("/farms/delete")
+def web_farm_soft_delete(
+    data: WebFarmActionRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    farm_ids = _get_farm_ids_for_user(uid, db)
+    if data.farm_id not in farm_ids:
+        raise HTTPException(status_code=403, detail="Farm not accessible")
+    db.execute(
+        text("UPDATE Farms SET deleted_at = NOW() WHERE farm_id = :fid"),
+        {"fid": data.farm_id},
+    )
+    db.commit()
+    return {"status": "ok", "message": "Farm deleted"}
+
+
+@webapp_router.post("/farms/archived-list")
+def web_farms_archived_list(
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    rows = db.execute(
+        text("""
+            SELECT farm_id, name, location, area_size, created_at, is_Archived, deleted_at
+            FROM Farms
+            WHERE user_id = :uid AND deleted_at IS NULL AND is_Archived = 1
+            ORDER BY created_at DESC
+        """),
+        {"uid": uid},
+    ).mappings().all()
+    return {"farms": [dict(r) for r in rows]}
 
 
 app.include_router(webapp_router)

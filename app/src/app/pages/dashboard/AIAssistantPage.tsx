@@ -286,7 +286,7 @@ export function AIAssistantPage() {
                 </div>
                 <h2 className="text-xl font-semibold mb-2">AgroAssist</h2>
                 <p className="text-sm text-muted-foreground max-w-md">
-                  Ask about your farm data, sensor readings, or request irrigation recommendations.
+                  Ask about your farm data, sensor readings, or request event recommendations.
                 </p>
               </div>
             ) : (
@@ -386,9 +386,9 @@ export function AIAssistantPage() {
                   <Lightbulb className="w-3 h-3 mr-2 text-yellow-500" />
                   Farm summary
                 </Button>
-                <Button variant="outline" size="sm" onClick={() => handleQuickPrompt("What irrigation schedule do you recommend?")} className="h-8 text-xs bg-card/50 border-border/50 rounded-full shrink-0">
+                <Button variant="outline" size="sm" onClick={() => handleQuickPrompt("What events schedule do you recommend?")} className="h-8 text-xs bg-card/50 border-border/50 rounded-full shrink-0">
                   <Lightbulb className="w-3 h-3 mr-2 text-yellow-500" />
-                  Irrigation advice
+                  Event advice
                 </Button>
               </div>
             )}

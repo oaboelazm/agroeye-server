@@ -231,12 +231,12 @@ export function OverviewPage() {
             </CardContent>
           </Card>
 
-          {/* E. Irrigation Summary */}
+          {/* E. Events Summary */}
           <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Droplets className="h-4 w-4 text-blue-500" />
-                Irrigation Summary
+                Events
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">

@@ -138,8 +138,8 @@ export function SettingsPage() {
                   </div>
                   <div className="flex items-center justify-between">
                     <div className="space-y-0.5">
-                      <Label className="text-base">Irrigation Events</Label>
-                      <p className="text-sm text-muted-foreground">When irrigation starts or ends</p>
+                      <Label className="text-base">Events</Label>
+                      <p className="text-sm text-muted-foreground">When events start or end</p>
                     </div>
                     <Switch defaultChecked />
                   </div>
