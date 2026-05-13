@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
@@ -16,6 +16,13 @@ export function ScansPage() {
   const [error, setError] = useState("");
   const [rescanningId, setRescanningId] = useState<string | null>(null);
   const [annotatedImages, setAnnotatedImages] = useState<Record<string, string>>({});
+  const [imageBlobs, setImageBlobs] = useState<Record<string, string>>({});
+  const blobUrlsRef = useRef<string[]>([]);
+
+  const revokeBlobs = () => {
+    blobUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+    blobUrlsRef.current = [];
+  };
 
   useEffect(() => {
     if (fields.length > 0 && selectedFieldId === null) {
@@ -27,10 +34,30 @@ export function ScansPage() {
     if (!selectedFieldId) return;
     setLoading(true);
     setError("");
+    revokeBlobs();
+    setImageBlobs({});
     try {
       const res = await api.scan.history(selectedFieldId);
-      setScans(res.history || []);
-      setAnnotatedImages({});
+      const items = res.history || [];
+      setScans(items);
+      setAnnotatedImages((prev) => {
+        const ids = new Set(items.map((s) => s.image_id));
+        return Object.fromEntries(Object.entries(prev).filter(([id]) => ids.has(id)));
+      });
+      const blobs: Record<string, string> = {};
+      const urls: string[] = [];
+      await Promise.all(
+        items.map(async (item) => {
+          if (!item.image_path) return;
+          const blobUrl = await api.fetchImageAsBlob(item.image_path);
+          if (blobUrl) {
+            blobs[item.image_id] = blobUrl;
+            urls.push(blobUrl);
+          }
+        })
+      );
+      setImageBlobs(blobs);
+      blobUrlsRef.current = urls;
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load scans");
       setScans([]);
@@ -41,6 +68,7 @@ export function ScansPage() {
 
   useEffect(() => {
     fetchScans();
+    return () => revokeBlobs();
   }, [fetchScans]);
 
   const handleRescan = async (scan: ScanHistoryItem) => {
@@ -130,16 +158,19 @@ export function ScansPage() {
                   <Card key={scan.image_id} className="border-border/50 bg-card/50 overflow-hidden">
                     <div className="flex flex-col md:flex-row">
                       <div className="md:w-72 shrink-0 bg-muted/30 flex items-center justify-center">
-                        {scan.image_path ? (
+                        {imageBlobs[scan.image_id] ? (
                           <img
-                            src={api.imageUrl(scan.image_path)}
+                            src={imageBlobs[scan.image_id]}
                             alt={`Scan ${scan.image_id.slice(0, 8)}`}
                             className="w-full h-56 md:h-48 object-cover"
-                            onError={(e) => {
-                              (e.target as HTMLImageElement).src = "";
-                              (e.target as HTMLImageElement).classList.add("hidden");
-                            }}
                           />
+                        ) : scan.image_path ? (
+                          <div className="w-full h-56 md:h-48 flex items-center justify-center text-muted-foreground">
+                            <div className="flex flex-col items-center gap-2">
+                              <div className="w-4 h-4 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin" />
+                              <span className="text-xs">Loading...</span>
+                            </div>
+                          </div>
                         ) : (
                           <div className="w-full h-56 md:h-48 flex items-center justify-center text-muted-foreground">
                             <ImageIcon className="h-8 w-8" />
