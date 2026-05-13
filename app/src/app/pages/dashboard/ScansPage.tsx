@@ -13,7 +13,7 @@ import { ScrollArea } from "../../components/ui/scroll-area";
 import { useAppData } from "../../contexts/AppDataContext";
 import { api } from "../../lib/api";
 import type { ScanHistoryItem } from "../../types/api";
-import { ScanLine, AlertCircle, Leaf, RotateCcw, ImageIcon, Calendar, FileText, Maximize2 } from "lucide-react";
+import { ScanLine, AlertCircle, Leaf, RotateCcw, ImageIcon, Calendar, FileText, Maximize2, X, ZoomIn } from "lucide-react";
 
 export function ScansPage() {
   const { fields } = useAppData();
@@ -25,6 +25,7 @@ export function ScansPage() {
   const [annotatedImages, setAnnotatedImages] = useState<Record<string, string>>({});
   const [imageBlobs, setImageBlobs] = useState<Record<string, string>>({});
   const [detailScan, setDetailScan] = useState<ScanHistoryItem | null>(null);
+  const [zoomedImage, setZoomedImage] = useState<string | null>(null);
   const blobUrlsRef = useRef<string[]>([]);
 
   const revokeBlobs = () => {
@@ -223,7 +224,7 @@ export function ScansPage() {
       )}
 
       <Dialog open={!!detailScan} onOpenChange={(o) => !o && setDetailScan(null)}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
           {detailScan && (
             <>
               <DialogHeader>
@@ -239,13 +240,23 @@ export function ScansPage() {
 
               <div className="grid md:grid-cols-2 gap-6">
                 <div className="space-y-4">
-                  <div className="rounded-lg overflow-hidden border border-border/50 bg-muted/20">
+                  <div
+                    className="rounded-lg overflow-hidden border border-border/50 bg-muted/20 cursor-pointer relative group"
+                    onClick={() => imageBlobs[detailScan.image_id] && setZoomedImage(imageBlobs[detailScan.image_id])}
+                  >
                     {imageBlobs[detailScan.image_id] ? (
-                      <img
-                        src={imageBlobs[detailScan.image_id]}
-                        alt={`Scan ${detailScan.image_id.slice(0, 8)}`}
-                        className="w-full h-auto object-cover"
-                      />
+                      <>
+                        <img
+                          src={imageBlobs[detailScan.image_id]}
+                          alt={`Scan ${detailScan.image_id.slice(0, 8)}`}
+                          className="w-full h-auto object-cover"
+                        />
+                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+                          <div className="p-2 bg-background/80 backdrop-blur-sm rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
+                            <ZoomIn className="h-5 w-5" />
+                          </div>
+                        </div>
+                      </>
                     ) : (
                       <div className="w-full h-48 flex items-center justify-center text-muted-foreground">
                         <ImageIcon className="h-8 w-8" />
@@ -256,12 +267,20 @@ export function ScansPage() {
                   {annotatedImages[detailScan.image_id] && (
                     <div>
                       <p className="text-xs font-medium text-muted-foreground mb-2">Annotated result:</p>
-                      <div className="rounded-lg overflow-hidden border border-border/50 bg-muted/20">
+                      <div
+                        className="rounded-lg overflow-hidden border border-border/50 bg-muted/20 cursor-pointer relative group"
+                        onClick={() => setZoomedImage(annotatedImages[detailScan.image_id]!)}
+                      >
                         <img
                           src={annotatedImages[detailScan.image_id]}
                           alt="Annotated scan"
                           className="w-full h-auto"
                         />
+                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+                          <div className="p-2 bg-background/80 backdrop-blur-sm rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
+                            <ZoomIn className="h-5 w-5" />
+                          </div>
+                        </div>
                       </div>
                     </div>
                   )}
@@ -320,6 +339,28 @@ export function ScansPage() {
           )}
         </DialogContent>
       </Dialog>
+
+      {zoomedImage && (
+        <div
+          className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center cursor-pointer"
+          onClick={() => setZoomedImage(null)}
+        >
+          <Button
+            variant="ghost"
+            size="icon"
+            className="absolute top-4 right-4 text-white/80 hover:text-white hover:bg-white/10 z-10"
+            onClick={() => setZoomedImage(null)}
+          >
+            <X className="h-6 w-6" />
+          </Button>
+          <img
+            src={zoomedImage}
+            alt="Zoomed scan"
+            className="max-w-[95vw] max-h-[95vh] object-contain"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
     </div>
   );
 }

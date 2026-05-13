@@ -1,8 +1,10 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { api } from "../lib/api";
 import { useAuth } from "./AuthContext";
 import type { Farm, Field, Device, NotificationItem, NodeStatusSummary } from "../types/domain";
 import type { Farm as ApiFarm } from "../types/api";
+
+const POLL_INTERVAL_MS = 30000;
 
 interface DashboardData {
   total_fields: number;
@@ -81,15 +83,24 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         deleted_at: f.deleted_at,
       }));
       setFarms(mapped);
-      if (mapped.length > 0 && !activeFarmId) {
-        setActiveFarmId(mapped[0].farm_id);
-      }
+      setActiveFarmIdState((current) => {
+        if (mapped.length > 0 && (!current || !mapped.some((f) => f.farm_id === current))) {
+          const newId = mapped[0].farm_id;
+          try { localStorage.setItem("agroeye_active_farm_id", String(newId)); } catch {}
+          return newId;
+        }
+        if (mapped.length === 0 && current !== null) {
+          try { localStorage.removeItem("agroeye_active_farm_id"); } catch {}
+          return null;
+        }
+        return current;
+      });
     } catch (err) {
       console.error("Failed to fetch farms:", err);
     } finally {
       setLoading(false);
     }
-  }, [user, activeFarmId, setActiveFarmId]);
+  }, [user]);
 
   const refreshFields = useCallback(async (farmId: number) => {
     try {
@@ -156,6 +167,15 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const refreshFarmsRef = useRef(refreshFarms);
+  const refreshNotificationsRef = useRef(refreshNotifications);
+  const refreshDashboardRef = useRef(refreshDashboard);
+  const activeFarmIdRef = useRef(activeFarmId);
+  refreshFarmsRef.current = refreshFarms;
+  refreshNotificationsRef.current = refreshNotifications;
+  refreshDashboardRef.current = refreshDashboard;
+  activeFarmIdRef.current = activeFarmId;
+
   useEffect(() => {
     if (isAuthenticated && user) {
       refreshFarms();
@@ -168,10 +188,31 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   }, [isAuthenticated, user, refreshFarms]);
 
   useEffect(() => {
+    if (!isAuthenticated || !user) return;
+    const id = setInterval(async () => {
+      await refreshFarmsRef.current();
+      const fid = activeFarmIdRef.current;
+      if (fid != null) {
+        await Promise.all([
+          refreshNotificationsRef.current(),
+          refreshDashboardRef.current(),
+        ]);
+      }
+    }, POLL_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [isAuthenticated, user]);
+
+  useEffect(() => {
     if (activeFarmId) {
       refreshFields(activeFarmId);
       refreshNotifications();
       refreshDashboard();
+    } else {
+      setFields([]);
+      setDevices([]);
+      setNotifications([]);
+      setNodeStatuses({});
+      setDashboardData(null);
     }
   }, [activeFarmId, refreshFields, refreshNotifications, refreshDashboard]);
 

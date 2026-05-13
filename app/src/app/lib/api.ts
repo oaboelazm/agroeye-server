@@ -174,7 +174,7 @@ export const api = {
       }),
 
     getIrrigation: (fieldId: number) =>
-      request<{ irrigation_events: Array<Record<string, unknown>> }>("/mobile/reports/get-irrigation", {
+      request<{ events: Array<Record<string, unknown>> }>("/mobile/reports/get-irrigation", {
         field_id: fieldId,
       }),
 

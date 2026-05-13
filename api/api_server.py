@@ -1695,10 +1695,10 @@ def web_dashboard(
 
         today_irr = db.execute(
             text(f"""
-                SELECT COUNT(*) as c, COALESCE(SUM(TIMESTAMPDIFF(MINUTE, start_time, end_time)), 0) as dur
-                FROM IrrigationEvents
+                SELECT COUNT(*) as c, COALESCE(SUM(TIMESTAMPDIFF(MINUTE, created_at, executed_at)), 0) as dur
+                FROM Events
                 WHERE field_id IN ({fid_placeholders})
-                AND DATE(start_time) = CURDATE()
+                AND DATE(created_at) = CURDATE()
             """),
             fid_params
         ).mappings().first()
@@ -1817,18 +1817,18 @@ def web_field_overview(
 
     last_irr = db.execute(
         text("""
-            SELECT start_time FROM IrrigationEvents
-            WHERE field_id = :fid AND start_time <= NOW()
-            ORDER BY start_time DESC LIMIT 1
+            SELECT created_at AS start_time FROM Events
+            WHERE field_id = :fid AND created_at <= NOW()
+            ORDER BY created_at DESC LIMIT 1
         """),
         {"fid": data.field_id}
     ).mappings().first()
 
     next_irr = db.execute(
         text("""
-            SELECT start_time FROM IrrigationEvents
-            WHERE field_id = :fid AND start_time > NOW()
-            ORDER BY start_time ASC LIMIT 1
+            SELECT created_at AS start_time FROM Events
+            WHERE field_id = :fid AND created_at > NOW()
+            ORDER BY created_at ASC LIMIT 1
         """),
         {"fid": data.field_id}
     ).mappings().first()
@@ -1978,13 +1978,14 @@ def web_irrigation_upcoming(
 
     rows = db.execute(
         text(f"""
-            SELECT e.irrigation_id, e.field_id, f.name AS field_name,
-                   e.start_time, e.end_time, e.status
-            FROM IrrigationEvents e
+            SELECT e.event_id AS irrigation_id, e.field_id, f.name AS field_name,
+                   e.created_at AS start_time, e.executed_at AS end_time,
+                   IF(e.is_executed, 'completed', 'scheduled') AS status
+            FROM Events e
             JOIN Fields f ON e.field_id = f.field_id
             WHERE e.field_id IN ({placeholders})
-            AND e.start_time > NOW()
-            ORDER BY e.start_time ASC
+            AND e.created_at > NOW()
+            ORDER BY e.created_at ASC
             LIMIT 5
         """),
         params
@@ -2001,7 +2002,7 @@ def web_irrigation_upcoming(
             field_name=r.get("field_name"),
             start_time=r.get("start_time"),
             end_time=r.get("end_time"),
-            duration_minutes=duration,
+            duration_minutes=duration if duration else 0,
             status=r.get("status", "scheduled"),
         ))
 
@@ -2027,13 +2028,14 @@ def web_irrigation_recent(
 
     rows = db.execute(
         text(f"""
-            SELECT e.irrigation_id, e.field_id, f.name AS field_name,
-                   e.start_time, e.end_time, e.status
-            FROM IrrigationEvents e
+            SELECT e.event_id AS irrigation_id, e.field_id, f.name AS field_name,
+                   e.created_at AS start_time, e.executed_at AS end_time,
+                   IF(e.is_executed, 'completed', 'scheduled') AS status
+            FROM Events e
             JOIN Fields f ON e.field_id = f.field_id
             WHERE e.field_id IN ({placeholders})
-            AND e.start_time <= NOW()
-            ORDER BY e.start_time DESC
+            AND e.created_at <= NOW()
+            ORDER BY e.created_at DESC
             LIMIT 10
         """),
         params
@@ -2050,7 +2052,7 @@ def web_irrigation_recent(
             field_name=r.get("field_name"),
             start_time=r.get("start_time"),
             end_time=r.get("end_time"),
-            duration_minutes=duration,
+            duration_minutes=duration if duration else 0,
             status=r.get("status", "completed"),
         ))
 
@@ -2076,28 +2078,28 @@ def web_irrigation_summary(
 
     today = db.execute(
         text(f"""
-            SELECT COUNT(*) as c, COALESCE(SUM(TIMESTAMPDIFF(MINUTE, start_time, end_time)), 0) as dur
-            FROM IrrigationEvents
+            SELECT COUNT(*) as c, COALESCE(SUM(TIMESTAMPDIFF(MINUTE, created_at, executed_at)), 0) as dur
+            FROM Events
             WHERE field_id IN ({placeholders})
-            AND DATE(start_time) = CURDATE()
+            AND DATE(created_at) = CURDATE()
         """),
         params
     ).mappings().first()
 
     week = db.execute(
         text(f"""
-            SELECT COUNT(*) as c FROM IrrigationEvents
+            SELECT COUNT(*) as c FROM Events
             WHERE field_id IN ({placeholders})
-            AND start_time >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+            AND created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
         """),
         params
     ).mappings().first()
 
     month = db.execute(
         text(f"""
-            SELECT COUNT(*) as c FROM IrrigationEvents
+            SELECT COUNT(*) as c FROM Events
             WHERE field_id IN ({placeholders})
-            AND start_time >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+            AND created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
         """),
         params
     ).mappings().first()
@@ -2197,7 +2199,7 @@ def web_reports_summary(
     irr_fid_ph = ", ".join([f":fid_{i}" for i in range(len(field_ids))])
     irr_fid_params = {f"fid_{i}": fid for i, fid in enumerate(field_ids)}
     irr_row = db.execute(
-        text(f"SELECT COUNT(*) as c FROM IrrigationEvents WHERE field_id IN ({irr_fid_ph})"),
+        text(f"SELECT COUNT(*) as c FROM Events WHERE field_id IN ({irr_fid_ph})"),
         irr_fid_params
     ).mappings().first()
     total_irrigation = irr_row["c"] if irr_row else 0
@@ -2283,17 +2285,17 @@ def web_report_field(
 
     last_irr = db.execute(
         text("""
-            SELECT start_time FROM IrrigationEvents
-            WHERE field_id = :fid AND start_time <= NOW()
-            ORDER BY start_time DESC LIMIT 1
+            SELECT created_at AS start_time FROM Events
+            WHERE field_id = :fid AND created_at <= NOW()
+            ORDER BY created_at DESC LIMIT 1
         """),
         {"fid": data.field_id}
     ).mappings().first()
 
     irr_30d = db.execute(
         text("""
-            SELECT COUNT(*) as c FROM IrrigationEvents
-            WHERE field_id = :fid AND start_time >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+            SELECT COUNT(*) as c FROM Events
+            WHERE field_id = :fid AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
         """),
         {"fid": data.field_id}
     ).mappings().first()
