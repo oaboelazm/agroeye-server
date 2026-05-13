@@ -1,4 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { ScrollArea } from "../../components/ui/scroll-area";
@@ -150,14 +152,15 @@ export function AIAssistantPage() {
           setIsStreaming(false);
           setStreamingContent("");
 
-          const aiMsg: Message = { role: "ai", content: fullAnswer, timestamp: new Date() };
+          const trimmed = fullAnswer.replace(/^\n+/, "").replace(/\n+$/, "");
+          const aiMsg: Message = { role: "ai", content: trimmed, timestamp: new Date() };
           setMessages((prev) => [...prev, aiMsg]);
           scrollToBottom();
 
           const sid = await ensureSession();
           if (sid) {
             await saveMessage(sid, "user", q);
-            await saveMessage(sid, "bot", fullAnswer);
+            await saveMessage(sid, "bot", trimmed);
             loadSessions();
           }
           loadSuggestions(q);
@@ -202,7 +205,7 @@ export function AIAssistantPage() {
   const activeSession = sessions.find((s) => s.session_id === currentSessionId);
 
   return (
-    <div className="flex h-[calc(100vh-64px)] w-full overflow-hidden">
+    <div className="flex h-full w-full overflow-hidden">
       <div className="flex-1 flex flex-col bg-background/50 relative">
         {/* Session bar */}
         <div className="shrink-0 flex items-center gap-2 px-4 md:px-8 pt-3 pb-1">
@@ -299,15 +302,17 @@ export function AIAssistantPage() {
                       </Avatar>
                     )}
                     <div className="flex flex-col gap-1 max-w-[80%]">
-                      <div
-                        className={`px-4 py-3 rounded-2xl text-sm whitespace-pre-wrap ${
-                          msg.role === "user"
-                            ? "bg-emerald-600 text-white rounded-tr-sm"
-                            : "bg-card border border-border/50 shadow-sm rounded-tl-sm leading-relaxed text-foreground"
-                        }`}
-                      >
-                        {msg.content}
-                      </div>
+                      {msg.role === "ai" ? (
+                        <div className="px-4 py-3 rounded-2xl text-sm bg-card border border-border/50 shadow-sm rounded-tl-sm leading-relaxed text-foreground prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-headings:my-2 prose-pre:my-2 prose-code:px-1 prose-code:py-0.5 prose-code:bg-muted prose-code:rounded prose-code:text-xs">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {msg.content}
+                          </ReactMarkdown>
+                        </div>
+                      ) : (
+                        <div className="px-4 py-3 rounded-2xl text-sm bg-emerald-600 text-white rounded-tr-sm whitespace-pre-wrap">
+                          {msg.content}
+                        </div>
+                      )}
                       <span className={`text-[10px] text-muted-foreground ${msg.role === "user" ? "text-right pr-1" : "text-left pl-1"}`}>
                         {msg.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                       </span>
@@ -328,15 +333,21 @@ export function AIAssistantPage() {
                   <AvatarFallback><Sparkles className="w-4 h-4 text-emerald-500" /></AvatarFallback>
                 </Avatar>
                 <div className="flex flex-col gap-1 max-w-[80%]">
-                  <div className="px-4 py-3 rounded-2xl text-sm bg-card border border-border/50 shadow-sm rounded-tl-sm leading-relaxed text-foreground whitespace-pre-wrap">
-                    {streamingContent || (
+                  {streamingContent ? (
+                    <div className="px-4 py-3 rounded-2xl text-sm bg-card border border-border/50 shadow-sm rounded-tl-sm leading-relaxed text-foreground prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-headings:my-2 prose-pre:my-2 prose-code:px-1 prose-code:py-0.5 prose-code:bg-muted prose-code:rounded prose-code:text-xs">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {streamingContent}
+                      </ReactMarkdown>
+                    </div>
+                  ) : (
+                    <div className="px-4 py-3 rounded-2xl text-sm bg-card border border-border/50 shadow-sm rounded-tl-sm leading-relaxed text-foreground">
                       <span className="flex items-center gap-1">
                         <span className="w-1.5 h-1.5 bg-emerald-500/50 rounded-full animate-bounce [animation-delay:-0.3s]" />
                         <span className="w-1.5 h-1.5 bg-emerald-500/50 rounded-full animate-bounce [animation-delay:-0.15s]" />
                         <span className="w-1.5 h-1.5 bg-emerald-500/50 rounded-full animate-bounce" />
                       </span>
-                    )}
-                  </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
