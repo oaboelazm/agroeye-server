@@ -143,16 +143,16 @@ export function AIAssistantPage() {
     const cancel = api.ai.askStream(
       { question: q },
       {
-        onToken: (token) => {
-          tokenBuffer.push(token);
-          setStreamingContent(tokenBuffer.join(""));
-          scrollToBottom();
-        },
-        onDone: async (fullAnswer, _meta) => {
-          setIsStreaming(false);
-          setStreamingContent("");
+          onToken: (token) => {
+            tokenBuffer.push(token);
+            setStreamingContent(tokenBuffer.join("").replace(/^\s+/, ""));
+            scrollToBottom();
+          },
+          onDone: async (fullAnswer, _meta) => {
+            setIsStreaming(false);
+            setStreamingContent("");
 
-          const trimmed = fullAnswer.replace(/^\n+/, "").replace(/\n+$/, "");
+            const trimmed = fullAnswer.replace(/^\s+/, "").replace(/\s+$/, "");
           const aiMsg: Message = { role: "ai", content: trimmed, timestamp: new Date() };
           setMessages((prev) => [...prev, aiMsg]);
           scrollToBottom();
@@ -205,7 +205,7 @@ export function AIAssistantPage() {
   const activeSession = sessions.find((s) => s.session_id === currentSessionId);
 
   return (
-    <div className="flex h-full w-full overflow-hidden">
+    <div className="flex h-[calc(100vh-96px)] w-full overflow-hidden">
       <div className="flex-1 flex flex-col bg-background/50 relative">
         {/* Session bar */}
         <div className="shrink-0 flex items-center gap-2 px-4 md:px-8 pt-3 pb-1">
@@ -275,7 +275,7 @@ export function AIAssistantPage() {
         </div>
 
         {/* Messages */}
-        <ScrollArea className="flex-1 px-4 md:px-8">
+        <ScrollArea className="flex-1 min-h-0 px-4 md:px-8">
           <div className="max-w-3xl mx-auto space-y-6 pb-4">
             {loadingSession ? (
               <div className="flex items-center justify-center h-32 text-sm text-muted-foreground">
