@@ -41,7 +41,6 @@ import {
 import { cn } from "../components/ui/utils";
 import { motion, AnimatePresence } from "motion/react";
 import { NotificationsDropdown } from "../components/dashboard/NotificationsDropdown";
-import { ScrollArea } from "../components/ui/scroll-area";
 import { OverviewPage } from "../pages/dashboard/OverviewPage";
 import { AnalyticsPage } from "../pages/dashboard/AnalyticsPage";
 import { FarmsPage } from "../pages/dashboard/FarmsPage";
@@ -137,7 +136,7 @@ export function DashboardLayout() {
           </Button>
         </div>
 
-        <ScrollArea className="flex-1 py-6 px-3">
+        <div className="flex-1 overflow-y-auto py-6 px-3 custom-scrollbar">
           <div className="flex flex-col gap-1.5">
             {SIDEBAR_ITEMS.map((item) => {
               const isActive = currentPage === item.key;
@@ -170,7 +169,7 @@ export function DashboardLayout() {
               );
             })}
           </div>
-        </ScrollArea>
+        </div>
 
         {/* Profile Section */}
         <div className="p-3 border-t border-border shrink-0 mt-auto">
