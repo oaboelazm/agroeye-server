@@ -41,6 +41,7 @@ import {
 import { cn } from "../components/ui/utils";
 import { motion, AnimatePresence } from "motion/react";
 import { NotificationsDropdown } from "../components/dashboard/NotificationsDropdown";
+import { ScrollArea } from "../components/ui/scroll-area";
 import { OverviewPage } from "../pages/dashboard/OverviewPage";
 import { AnalyticsPage } from "../pages/dashboard/AnalyticsPage";
 import { FarmsPage } from "../pages/dashboard/FarmsPage";
@@ -136,38 +137,40 @@ export function DashboardLayout() {
           </Button>
         </div>
 
-        <div className="flex-1 overflow-y-auto py-6 px-3 flex flex-col gap-1.5 scrollbar-none">
-          {SIDEBAR_ITEMS.map((item) => {
-            const isActive = currentPage === item.key;
-            return (
-              <button
-                key={item.key}
-                onClick={() => setCurrentPage(item.key)}
-                title={collapsed ? item.label : undefined}
-                className={cn(
-                  "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group relative w-full text-left",
-                  isActive
-                    ? "bg-emerald-500/10 text-emerald-500 font-medium border border-emerald-500/20 shadow-sm"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground border border-transparent"
-                )}
-              >
-                {isActive && <motion.div layoutId="active-indicator" className="absolute left-0 w-1 h-5 bg-emerald-500 rounded-r-full" />}
-                <div className="relative">
-                  <item.icon className={cn("h-5 w-5 shrink-0", isActive ? "text-emerald-500" : "")} />
-                  {item.key === "notifications" && unreadCount > 0 && !collapsed && (
-                    <span className="absolute -top-1.5 -right-1.5 h-3.5 w-3.5 bg-red-500 rounded-full text-[8px] text-white font-bold flex items-center justify-center">
-                      {unreadCount > 9 ? "9+" : unreadCount}
-                    </span>
+        <ScrollArea className="flex-1 py-6 px-3">
+          <div className="flex flex-col gap-1.5">
+            {SIDEBAR_ITEMS.map((item) => {
+              const isActive = currentPage === item.key;
+              return (
+                <button
+                  key={item.key}
+                  onClick={() => setCurrentPage(item.key)}
+                  title={collapsed ? item.label : undefined}
+                  className={cn(
+                    "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group relative w-full text-left",
+                    isActive
+                      ? "bg-emerald-500/10 text-emerald-500 font-medium border border-emerald-500/20 shadow-sm"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground border border-transparent"
                   )}
-                  {item.key === "notifications" && unreadCount > 0 && collapsed && (
-                    <span className="absolute -top-1.5 -right-1.5 h-2.5 w-2.5 bg-red-500 rounded-full" />
-                  )}
-                </div>
-                {!collapsed && <span className="truncate">{item.label}</span>}
-              </button>
-            );
-          })}
-        </div>
+                >
+                  {isActive && <motion.div layoutId="active-indicator" className="absolute left-0 w-1 h-5 bg-emerald-500 rounded-r-full" />}
+                  <div className="relative">
+                    <item.icon className={cn("h-5 w-5 shrink-0", isActive ? "text-emerald-500" : "")} />
+                    {item.key === "notifications" && unreadCount > 0 && !collapsed && (
+                      <span className="absolute -top-1.5 -right-1.5 h-3.5 w-3.5 bg-red-500 rounded-full text-[8px] text-white font-bold flex items-center justify-center">
+                        {unreadCount > 9 ? "9+" : unreadCount}
+                      </span>
+                    )}
+                    {item.key === "notifications" && unreadCount > 0 && collapsed && (
+                      <span className="absolute -top-1.5 -right-1.5 h-2.5 w-2.5 bg-red-500 rounded-full" />
+                    )}
+                  </div>
+                  {!collapsed && <span className="truncate">{item.label}</span>}
+                </button>
+              );
+            })}
+          </div>
+        </ScrollArea>
 
         {/* Profile Section */}
         <div className="p-3 border-t border-border shrink-0 mt-auto">
@@ -263,9 +266,9 @@ export function DashboardLayout() {
         </header>
 
         {/* Page Content */}
-        <main className="flex-1 overflow-y-auto bg-transparent relative w-full pb-8">
+        <ScrollArea className="flex-1 pb-8">
           <PageComponent />
-        </main>
+        </ScrollArea>
       </div>
     </div>
   );
