@@ -3490,5 +3490,131 @@ def web_field_delete(
     return {"status": "success", "message": "Field deleted"}
 
 
+# ── Manual Scan (from mobile, no field/device) ──
+
+
+@webapp_router.post("/scans/manual-analyze")
+async def web_manual_scan_analyze(
+    image_file: UploadFile = File(...),
+    user_id: Optional[int] = Form(None),
+    return_annotated: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+    timestamp = datetime.now(timezone.utc)
+    ts_str = timestamp.strftime("%Y%m%dT%H%M%SZ")
+    ext = os.path.splitext(image_file.filename or "")[1].lstrip(".") or "jpg"
+
+    image_id = str(uuid.uuid4())
+    filename = f"scan_{uuid.uuid4()}.{ext}"
+    file_path = os.path.join(UPLOAD_DIR, filename)
+
+    content = await image_file.read()
+    with open(file_path, "wb") as f:
+        f.write(content)
+
+    model = _get_vision_model()
+    results = model.predict(source=file_path, verbose=False)
+    result = results[0]
+
+    names = getattr(result, "names", None) or getattr(model, "names", {})
+    detections = []
+    confs = []
+    top_disease = "Unknown"
+    max_conf = 0.0
+    if result.boxes is not None and len(result.boxes) > 0:
+        xyxy = result.boxes.xyxy.tolist()
+        conf = result.boxes.conf.tolist()
+        cls_ids = result.boxes.cls.tolist()
+        for i in range(len(xyxy)):
+            cls_id = int(cls_ids[i])
+            label = names.get(cls_id, str(cls_id)) if isinstance(names, dict) else str(cls_id)
+            score = float(conf[i])
+            confs.append(score)
+            detections.append(
+                {"label": label, "confidence": score, "bbox_xyxy": [float(v) for v in xyxy[i]]}
+            )
+        max_conf = max(confs)
+        top_disease = detections[confs.index(max_conf)]["label"]
+
+    recommendation = _generate_recommendation(top_disease)
+
+    db.execute(
+        text("""
+            INSERT INTO Images (image_id, device_id, field_id, image_path, capture_timestamp, file_size)
+            VALUES (:iid, 0, 0, :path, :ts, :size)
+        """),
+        {"iid": image_id, "path": filename, "ts": timestamp, "size": len(content)},
+    )
+
+    db.execute(
+        text("""
+            INSERT INTO AIResults (image_id, disease_detected, confidence_score, recommendation, analysis_timestamp)
+            VALUES (:iid, :disease, :confidence, :recommendation, :ts)
+        """),
+        {
+            "iid": image_id,
+            "disease": top_disease,
+            "confidence": round(max_conf, 4),
+            "recommendation": recommendation,
+            "ts": timestamp,
+        },
+    )
+    db.commit()
+
+    annotated_b64 = None
+    if _to_bool(return_annotated):
+        import cv2
+        annotated = result.plot()
+        ok, encoded = cv2.imencode(".jpg", annotated)
+        if not ok:
+            raise RuntimeError("Failed to encode annotated image")
+        annotated_b64 = base64.b64encode(encoded.tobytes()).decode("utf-8")
+
+    response = {
+        "status": "ok",
+        "image_id": image_id,
+        "filename": filename,
+        "meta": {
+            "timestamp_utc": ts_str,
+            "user_id": user_id or uid,
+            "source": "manual",
+        },
+        "detections": detections,
+        "max_confidence": float(max_conf),
+        "count": len(detections),
+        "analysis": {
+            "disease_detected": top_disease,
+            "confidence_score": float(max_conf),
+            "recommendation": recommendation,
+        },
+    }
+
+    if annotated_b64 is not None:
+        response["annotated_image_base64"] = annotated_b64
+        response["annotated_image_format"] = "jpg"
+
+    return response
+
+
+@webapp_router.post("/scans/manual-list")
+def web_manual_scan_list(
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    rows = db.execute(
+        text("""
+            SELECT i.*, r.*
+            FROM Images i
+            LEFT JOIN AIResults r ON i.image_id = r.image_id
+            WHERE i.field_id = 0
+            ORDER BY i.capture_timestamp DESC
+        """),
+    ).mappings().all()
+    return {"history": [dict(r) for r in rows]}
+
+
 app.include_router(webapp_router)
 

@@ -13,11 +13,12 @@ import { ScrollArea } from "../../components/ui/scroll-area";
 import { useAppData } from "../../contexts/AppDataContext";
 import { api } from "../../lib/api";
 import type { ScanHistoryItem } from "../../types/api";
-import { ScanLine, AlertCircle, Leaf, RotateCcw, ImageIcon, Calendar, FileText, Maximize2, X, ZoomIn, ShieldCheck, AlertTriangle, FlaskConical, HardDrive, Cpu } from "lucide-react";
+import { ScanLine, AlertCircle, Leaf, RotateCcw, ImageIcon, Calendar, FileText, Maximize2, X, ZoomIn, ShieldCheck, AlertTriangle, FlaskConical, HardDrive, Cpu, Smartphone } from "lucide-react";
 
 export function ScansPage() {
   const { fields } = useAppData();
   const [selectedFieldId, setSelectedFieldId] = useState<number | null>(null);
+  const [manualMode, setManualMode] = useState(false);
   const [scans, setScans] = useState<ScanHistoryItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -34,20 +35,22 @@ export function ScansPage() {
   };
 
   useEffect(() => {
-    if (fields.length > 0 && selectedFieldId === null) {
+    if (fields.length > 0 && selectedFieldId === null && !manualMode) {
       setSelectedFieldId(fields[0].field_id);
     }
-  }, [fields, selectedFieldId]);
+  }, [fields, selectedFieldId, manualMode]);
 
   const fetchScans = useCallback(async () => {
-    if (!selectedFieldId) return;
     setLoading(true);
     setError("");
     revokeBlobs();
     setImageBlobs({});
     try {
-      const res = await api.web.scanHistory(selectedFieldId);
-      const items = res.history || [];
+      const items = manualMode
+        ? (await api.scan.manualList()).history || []
+        : selectedFieldId
+          ? (await api.web.scanHistory(selectedFieldId)).history || []
+          : [];
       setScans(items);
       setAnnotatedImages((prev) => {
         const ids = new Set(items.map((s) => s.image_id));
@@ -73,7 +76,7 @@ export function ScansPage() {
     } finally {
       setLoading(false);
     }
-  }, [selectedFieldId]);
+  }, [selectedFieldId, manualMode]);
 
   useEffect(() => {
     fetchScans();
@@ -125,12 +128,21 @@ export function ScansPage() {
       ) : (
         <>
           <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-none">
+            <Button
+              variant={manualMode ? "default" : "outline"}
+              size="sm"
+              onClick={() => { setManualMode(true); setSelectedFieldId(null); }}
+              className="rounded-full shrink-0"
+            >
+              <Smartphone className="w-3 h-3 mr-2" />
+              Manual
+            </Button>
             {fields.map((f) => (
               <Button
                 key={f.field_id}
-                variant={selectedFieldId === f.field_id ? "default" : "outline"}
+                variant={!manualMode && selectedFieldId === f.field_id ? "default" : "outline"}
                 size="sm"
-                onClick={() => setSelectedFieldId(f.field_id)}
+                onClick={() => { setSelectedFieldId(f.field_id); setManualMode(false); }}
                 className="rounded-full shrink-0"
               >
                 <Leaf className="w-3 h-3 mr-2" />
@@ -157,7 +169,7 @@ export function ScansPage() {
           ) : scans.length === 0 ? (
             <Card className="border-border/50 bg-card/50 p-12 text-center">
               <ScanLine className="h-8 w-8 mx-auto mb-2 text-muted-foreground/50" />
-              <p className="text-muted-foreground">No scans recorded for this field yet. Use the AgroEye mobile app to capture crop images with ESP32-CAM modules.</p>
+              <p className="text-muted-foreground">{manualMode ? "No manual scans yet. Use the mobile app to capture and analyze crop images manually." : "No scans recorded for this field yet. Use the AgroEye mobile app to capture crop images with ESP32-CAM modules."}</p>
             </Card>
           ) : (
             <ScrollArea className="h-[calc(100vh-280px)]">
@@ -185,16 +197,21 @@ export function ScansPage() {
                           <Maximize2 className="h-3.5 w-3.5 text-muted-foreground" />
                         </div>
                       </div>
-                      {scan.disease_detected && (
-                        <div className="absolute top-2 left-2">
+                      <div className="absolute top-2 left-2 flex gap-1">
+                        {scan.device_id === 0 && (
+                          <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30">
+                            Manual
+                          </Badge>
+                        )}
+                        {scan.disease_detected && (
                           <Badge
                             variant={isHealthy(scan.disease_detected) ? "secondary" : "destructive"}
                             className="text-[10px] px-1.5 py-0"
                           >
                             {scan.disease_detected}
                           </Badge>
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </div>
                     <CardContent className="p-3 space-y-1.5">
                       <div className="flex items-center gap-1 text-xs text-muted-foreground">
@@ -387,12 +404,17 @@ export function ScansPage() {
                             <span>{(detailScan.file_size / 1024).toFixed(1)} KB</span>
                           </div>
                         )}
-                        {detailScan.device_id && (
+                        {detailScan.device_id === 0 ? (
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Source</span>
+                            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30 font-normal">Manual</Badge>
+                          </div>
+                        ) : detailScan.device_id ? (
                           <div className="flex justify-between">
                             <span className="text-muted-foreground">Device</span>
                             <span>#{detailScan.device_id}</span>
                           </div>
-                        )}
+                        ) : null}
                       </div>
                     </div>
                   </div>

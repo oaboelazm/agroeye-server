@@ -245,6 +245,26 @@ export const api = {
         annotated_image_base64?: string;
       }>("/ai/vision/analyze", fd);
     },
+
+    manualAnalyze: (file: File, returnAnnotated?: boolean) => {
+      const fd = new FormData();
+      fd.append("image_file", file);
+      if (returnAnnotated) fd.append("return_annotated", "true");
+      return uploadFile<{
+        status: string;
+        image_id: string;
+        filename: string;
+        meta: { timestamp_utc: string; source: string };
+        detections: Array<{ label: string; confidence: number; bbox_xyxy: number[] }>;
+        max_confidence: number;
+        count: number;
+        analysis: { disease_detected: string; confidence_score: number; recommendation: string };
+        annotated_image_base64?: string;
+      }>("/webapp/scans/manual-analyze", fd);
+    },
+
+    manualList: () =>
+      request<ScanHistoryResponse>("/webapp/scans/manual-list", {}),
   },
 
   ai: {
