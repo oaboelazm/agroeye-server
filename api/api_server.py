@@ -3496,10 +3496,9 @@ def web_field_delete(
 @webapp_router.post("/scans/manual-analyze")
 async def web_manual_scan_analyze(
     image_file: UploadFile = File(...),
-    user_id: Optional[int] = Form(None),
+    user_id: int = Form(0),
     return_annotated: Optional[str] = Form(None),
     db: Session = Depends(get_db),
-    uid: int = Depends(_get_user_id_from_token),
 ):
     os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -3579,7 +3578,7 @@ async def web_manual_scan_analyze(
         "filename": filename,
         "meta": {
             "timestamp_utc": ts_str,
-            "user_id": user_id or uid,
+            "user_id": user_id,
             "source": "manual",
         },
         "detections": detections,
