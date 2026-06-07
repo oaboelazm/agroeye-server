@@ -58,6 +58,8 @@ export interface ScanImage {
   image_path: string;
   capture_timestamp: string;
   file_size: number | null;
+  source?: string;
+  user_id?: number | null;
 }
 
 export interface ScanAnalysis {

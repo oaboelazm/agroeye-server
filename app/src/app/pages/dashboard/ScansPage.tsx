@@ -198,7 +198,7 @@ export function ScansPage() {
                         </div>
                       </div>
                       <div className="absolute top-2 left-2 flex gap-1">
-                        {scan.device_id === 0 && (
+                        {scan.source === "manual" && (
                           <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30">
                             Manual
                           </Badge>
@@ -404,7 +404,7 @@ export function ScansPage() {
                             <span>{(detailScan.file_size / 1024).toFixed(1)} KB</span>
                           </div>
                         )}
-                        {detailScan.device_id === 0 ? (
+                        {detailScan.source === "manual" ? (
                           <div className="flex justify-between">
                             <span className="text-muted-foreground">Source</span>
                             <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30 font-normal">Manual</Badge>

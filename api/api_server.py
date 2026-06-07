@@ -2,6 +2,7 @@
 # Imports
 # =========================================================
 
+import json
 import logging
 import os
 import uuid
@@ -1133,12 +1134,14 @@ async def ai_vision_analyze(
 
 
 # =========================================================
-# Hardware — Base Station API Section
+# Hardware — Base Station API
 # =========================================================
-# Three main APIs:
-#   API 1  → POST /hardware/nodes/upload   (raw node readings → SensorLog)
-#   API 2  → POST /hardware/field/decide   (processed → SensorReadings + AI → Events)
-#   API 3  → POST /hardware/field/sync     (offline sync → SensorLog + SensorReadings + Events)
+# Single combined endpoint:
+#   POST /hardware/upload
+# Base station uploads raw sensing node readings as JSON.
+# Server stores each in SensorLog, computes field averages,
+# stores them in SensorReadings, runs cloud AI, stores the
+# decision in Events, and returns the result to base station.
 # =========================================================
 
 # ── Helper ─────────────────────────────────────────────────
@@ -1150,33 +1153,6 @@ def _validate_base_station(db: Session, bs_id: int, field_id: int):
     ).first()
     if not row:
         raise HTTPException(status_code=404, detail="Base station not found in this field")
-
-
-# ═══════════════════════════════════════════════════════════
-# API 1 – Upload Raw Sensing Node Readings → SensorLog
-# ═══════════════════════════════════════════════════════════
-
-class NodeReadingPayload(BaseModel):
-    node_id: str = Field(..., min_length=1, max_length=50)
-    soil_moisture: Optional[float] = None
-    soil_ph: Optional[float] = None
-    temperature: Optional[float] = None
-    humidity: Optional[float] = None
-    light_intensity: Optional[float] = None
-    water_level: Optional[float] = None
-    nitrogen: Optional[float] = None
-    phosphorus: Optional[float] = None
-    potassium: Optional[float] = None
-    battery_level: Optional[float] = None
-    signal_strength: Optional[int] = None
-    timestamp: Optional[datetime] = None
-
-
-class NodesUploadRequest(BaseModel):
-    base_station_id: int = Field(..., gt=0)
-    field_id: int = Field(..., gt=0)
-    timestamp: Optional[datetime] = None
-    nodes: list[NodeReadingPayload] = Field(..., min_length=1)
 
 
 _COL_MAP_NODE_TO_SENSORLOG = {
@@ -1194,22 +1170,53 @@ _COL_MAP_NODE_TO_SENSORLOG = {
 }
 
 
-@app.post("/hardware/nodes/upload", status_code=201)
-def upload_node_readings(
-    payload: NodesUploadRequest,
+class NodeReadingPayload(BaseModel):
+    node_id: int = Field(..., gt=0)
+    soil_moisture: Optional[float] = None
+    soil_ph: Optional[float] = None
+    temperature: Optional[float] = None
+    humidity: Optional[float] = None
+    light_intensity: Optional[float] = None
+    water_level: Optional[float] = None
+    nitrogen: Optional[float] = None
+    phosphorus: Optional[float] = None
+    potassium: Optional[float] = None
+    battery_level: Optional[float] = None
+    signal_strength: Optional[int] = None
+
+
+class BaseStationUploadRequest(BaseModel):
+    base_station_id: int = Field(..., gt=0)
+    field_id: int = Field(..., gt=0)
+    timestamp: Optional[float] = None
+    nodes: list[NodeReadingPayload] = Field(..., min_length=1)
+
+
+@app.post("/hardware/upload")
+def base_station_upload(
+    payload: BaseStationUploadRequest,
     db: Session = Depends(get_db),
 ):
     """
-    API 1: Base station uploads raw readings from all sensing nodes
-           into the SensorLog table.
+    Single endpoint: base station sends raw node readings.
+    1. Store each node in SensorLog
+    2. Compute field averages
+    3. Store averaged reading in SensorReadings
+    4. Run cloud AI decision
+    5. Store AI decision in Events
+    6. Return decision to base station
     """
     _validate_base_station(db, payload.base_station_id, payload.field_id)
-    now = payload.timestamp or datetime.now(timezone.utc)
+    now = datetime.fromtimestamp(payload.timestamp, tz=timezone.utc) if payload.timestamp else datetime.now(timezone.utc)
+
+    # ── 1. Store each node in SensorLog ───────────────────
     stored = 0
     errors = []
+    node_values = []
 
     for idx, node in enumerate(payload.nodes):
         node_data = node.model_dump(exclude_none=True)
+        node_values.append(node_data)
 
         mapped = {"device_id": payload.base_station_id}
         for req_key, db_col in _COL_MAP_NODE_TO_SENSORLOG.items():
@@ -1221,7 +1228,7 @@ def upload_node_readings(
             errors.append({"index": idx, "node_id": node.node_id, "error": "no sensor data"})
             continue
 
-        mapped["created_at"] = node.timestamp or now
+        mapped["created_at"] = now
         columns = list(mapped.keys())
         placeholders = [f":{col}" for col in columns]
 
@@ -1240,55 +1247,29 @@ def upload_node_readings(
             db.commit()
         except Exception:
             db.rollback()
-            raise HTTPException(status_code=500, detail="Failed to commit readings")
+            raise HTTPException(status_code=500, detail="Failed to commit SensorLog entries")
 
-    return {
-        "status": "ok",
-        "base_station_id": payload.base_station_id,
-        "field_id": payload.field_id,
-        "nodes_received": len(payload.nodes),
-        "nodes_stored": stored,
-        "errors": errors if errors else None,
-        "received_at": datetime.now(timezone.utc).isoformat(),
-    }
+    # ── 2. Compute field averages from raw node data ──────
+    numeric_fields = [
+        "soil_moisture", "soil_ph", "temperature",
+        "humidity", "light_intensity",
+        "nitrogen", "phosphorus", "potassium",
+    ]
+    sums = {f: 0.0 for f in numeric_fields}
+    counts = {f: 0 for f in numeric_fields}
 
+    for nd in node_values:
+        for f in numeric_fields:
+            val = nd.get(f)
+            if val is not None:
+                sums[f] += val
+                counts[f] += 1
 
-# ═══════════════════════════════════════════════════════════
-# API 2 – Send Processed Readings → Cloud AI → Events
-# ═══════════════════════════════════════════════════════════
+    avg = {}
+    for f in numeric_fields:
+        avg[f] = sums[f] / counts[f] if counts[f] > 0 else None
 
-class FieldDecideRequest(BaseModel):
-    base_station_id: int = Field(..., gt=0)
-    field_id: int = Field(..., gt=0)
-    timestamp: Optional[datetime] = None
-    aggregation_method: str = "average"
-    node_count: int = Field(1, ge=1)
-    avg_soil_moisture: Optional[float] = None
-    avg_temperature: Optional[float] = None
-    avg_humidity: Optional[float] = None
-    avg_soil_ph: Optional[float] = None
-    avg_light_intensity: Optional[float] = None
-    avg_nitrogen: Optional[float] = None
-    avg_phosphorus: Optional[float] = None
-    avg_potassium: Optional[float] = None
-
-
-@app.post("/hardware/field/decide")
-def request_field_decision(
-    payload: FieldDecideRequest,
-    db: Session = Depends(get_db),
-):
-    """
-    API 2: Base station sends processed (averaged) field readings.
-    1. Store in SensorReadings table
-    2. Run Cloud AI decision
-    3. Store decision in Events table
-    4. Return decision + event_id to base station for execution
-    """
-    _validate_base_station(db, payload.base_station_id, payload.field_id)
-    now = payload.timestamp or datetime.now(timezone.utc)
-
-    # ── 1. Store processed reading in SensorReadings ──────
+    # ── 3. Store averaged reading in SensorReadings ───────
     reading_id = None
     try:
         r_result = db.execute(
@@ -1307,52 +1288,52 @@ def request_field_decision(
             {
                 "did": payload.base_station_id,
                 "ts": now,
-                "temp_soil": payload.avg_temperature,
-                "hum_soil": payload.avg_humidity,
-                "soil_moist": payload.avg_soil_moisture,
-                "ph": payload.avg_soil_ph,
-                "n": payload.avg_nitrogen,
-                "p": payload.avg_phosphorus,
-                "k": payload.avg_potassium,
-                "light": payload.avg_light_intensity,
+                "temp_soil": avg.get("temperature"),
+                "hum_soil": avg.get("humidity"),
+                "soil_moist": avg.get("soil_moisture"),
+                "ph": avg.get("soil_ph"),
+                "n": avg.get("nitrogen"),
+                "p": avg.get("phosphorus"),
+                "k": avg.get("potassium"),
+                "light": avg.get("light_intensity"),
             },
         )
         db.commit()
         reading_id = getattr(r_result, "lastrowid", None)
     except Exception:
         db.rollback()
-        logger.exception("Failed to store processed reading")
-        raise HTTPException(status_code=500, detail="Failed to store processed reading")
+        logger.exception("Failed to store averaged reading")
+        raise HTTPException(status_code=500, detail="Failed to store averaged reading")
 
-    # ── 2. Run Cloud AI Decision ──────────────────────────
+    # ── 4. Run Cloud AI Decision ──────────────────────────
     try:
         runtime = _get_decision_runtime()
-        ts_iso = now.isoformat() if isinstance(now, datetime) else datetime.now(timezone.utc).isoformat()
+        ts_iso = now.isoformat()
 
         ai_sensors = {}
-        if payload.avg_temperature is not None:
-            ai_sensors["air_temperature"] = payload.avg_temperature
-        if payload.avg_humidity is not None:
-            ai_sensors["air_humidity"] = payload.avg_humidity
-        if payload.avg_soil_moisture is not None:
-            ai_sensors["soil_moisture"] = payload.avg_soil_moisture
-        if payload.avg_soil_ph is not None:
-            ai_sensors["soil_ph"] = payload.avg_soil_ph
-        if payload.avg_nitrogen is not None:
-            ai_sensors["soil_n"] = payload.avg_nitrogen
-        if payload.avg_phosphorus is not None:
-            ai_sensors["soil_p"] = payload.avg_phosphorus
-        if payload.avg_potassium is not None:
-            ai_sensors["soil_k"] = payload.avg_potassium
-        if payload.avg_light_intensity is not None:
-            ai_sensors["light_lux"] = payload.avg_light_intensity
+        if avg.get("temperature") is not None:
+            ai_sensors["air_temperature"] = avg["temperature"]
+        if avg.get("humidity") is not None:
+            ai_sensors["air_humidity"] = avg["humidity"]
+        if avg.get("soil_moisture") is not None:
+            ai_sensors["soil_moisture"] = avg["soil_moisture"]
+        if avg.get("soil_ph") is not None:
+            ai_sensors["soil_ph"] = avg["soil_ph"]
+        if avg.get("nitrogen") is not None:
+            ai_sensors["soil_n"] = avg["nitrogen"]
+        if avg.get("phosphorus") is not None:
+            ai_sensors["soil_p"] = avg["phosphorus"]
+        if avg.get("potassium") is not None:
+            ai_sensors["soil_k"] = avg["potassium"]
+        if avg.get("light_intensity") is not None:
+            ai_sensors["light_lux"] = avg["light_intensity"]
 
         ai_result = runtime.decide(ts_iso, ai_sensors)
     except Exception as e:
         logger.exception("Cloud AI decision failed")
         raise HTTPException(status_code=500, detail=f"AI decision failed: {str(e)}")
 
-    # ── 3. Store AI decision in Events table ──────────────
+    # ── 5. Store AI decision in Events table ──────────────
     event_id = None
     try:
         actions_json = json.dumps(ai_result.get("actions", {}))
@@ -1390,10 +1371,13 @@ def request_field_decision(
 
     ai_actions = ai_result.get("actions", {})
 
+    # ── 6. Return result to base station ──────────────────
     return {
         "status": "ok",
         "base_station_id": payload.base_station_id,
         "field_id": payload.field_id,
+        "nodes_received": len(payload.nodes),
+        "nodes_stored": stored,
         "reading_id": reading_id,
         "event_id": event_id,
         "decision": {
@@ -1403,180 +1387,7 @@ def request_field_decision(
             "safety": ai_result.get("safety"),
         },
         "timestamp_utc": ai_result.get("timestamp_utc"),
-    }
-
-
-# ═══════════════════════════════════════════════════════════
-# API 3 – Offline Sync After Reconnection
-# ═══════════════════════════════════════════════════════════
-
-class SyncNodeReading(BaseModel):
-    node_id: str = Field(..., min_length=1)
-    soil_moisture: Optional[float] = None
-    soil_ph: Optional[float] = None
-    temperature: Optional[float] = None
-    humidity: Optional[float] = None
-    light_intensity: Optional[float] = None
-    water_level: Optional[float] = None
-    nitrogen: Optional[float] = None
-    phosphorus: Optional[float] = None
-    potassium: Optional[float] = None
-    battery_level: Optional[float] = None
-    signal_strength: Optional[int] = None
-    timestamp: Optional[datetime] = None
-
-
-class SyncProcessedReading(BaseModel):
-    aggregation_method: str = "average"
-    node_count: int = 1
-    avg_soil_moisture: Optional[float] = None
-    avg_temperature: Optional[float] = None
-    avg_humidity: Optional[float] = None
-    avg_soil_ph: Optional[float] = None
-    avg_light_intensity: Optional[float] = None
-    avg_nitrogen: Optional[float] = None
-    avg_phosphorus: Optional[float] = None
-    avg_potassium: Optional[float] = None
-    timestamp: Optional[datetime] = None
-
-
-class SyncDecision(BaseModel):
-    event_type: str = "local_ai"
-    actions: dict = Field(default_factory=dict)
-    confidence: float = 0.0
-    is_executed: bool = True
-    executed_at: Optional[datetime] = None
-    timestamp: Optional[datetime] = None
-
-
-class OfflineSyncRequest(BaseModel):
-    base_station_id: int = Field(..., gt=0)
-    field_id: int = Field(..., gt=0)
-    raw_readings: list[SyncNodeReading] = Field(default_factory=list)
-    processed_readings: list[SyncProcessedReading] = Field(default_factory=list)
-    local_decisions: list[SyncDecision] = Field(default_factory=list)
-
-
-@app.post("/hardware/field/sync", status_code=201)
-def sync_offline_data(
-    payload: OfflineSyncRequest,
-    db: Session = Depends(get_db),
-):
-    """
-    API 3: Base station reconnects and syncs all offline data.
-    - Raw node readings   → SensorLog
-    - Processed readings  → SensorReadings
-    - Local AI decisions  → Events (is_synced = FALSE)
-    """
-    _validate_base_station(db, payload.base_station_id, payload.field_id)
-    now = datetime.now(timezone.utc)
-    readings_stored = 0
-    processed_stored = 0
-    decisions_stored = 0
-    errors = []
-
-    # ── 1. Raw node readings → SensorLog ──────────────────
-    for idx, node in enumerate(payload.raw_readings):
-        node_data = node.model_dump(exclude_none=True)
-        mapped = {"device_id": payload.base_station_id}
-        for req_key, db_col in _COL_MAP_NODE_TO_SENSORLOG.items():
-            if req_key in node_data:
-                mapped[db_col] = node_data[req_key]
-
-        sensor_keys = [k for k in mapped if k not in ("device_id", "node_id")]
-        if not sensor_keys:
-            continue
-
-        mapped["created_at"] = node.timestamp or now
-        columns = list(mapped.keys())
-        placeholders = [f":{col}" for col in columns]
-
-        try:
-            db.execute(
-                text(f"INSERT INTO SensorLog ({', '.join(columns)}) VALUES ({', '.join(placeholders)})"),
-                mapped,
-            )
-            readings_stored += 1
-        except Exception as e:
-            errors.append(f"raw_reading[{idx}]: {str(e)}")
-
-    # ── 2. Processed readings → SensorReadings ────────────
-    for idx, pr in enumerate(payload.processed_readings):
-        try:
-            db.execute(
-                text("""
-                    INSERT INTO SensorReadings
-                        (device_id, timestamp,
-                         temperature_soil, humidity_soil, soil_moisture,
-                         soil_ph, nitrogen, phosphorus, potassium,
-                         light_intensity)
-                    VALUES
-                        (:did, :ts,
-                         :temp_soil, :hum_soil, :soil_moist,
-                         :ph, :n, :p, :k,
-                         :light)
-                """),
-                {
-                    "did": payload.base_station_id,
-                    "ts": pr.timestamp or now,
-                    "temp_soil": pr.avg_temperature,
-                    "hum_soil": pr.avg_humidity,
-                    "soil_moist": pr.avg_soil_moisture,
-                    "ph": pr.avg_soil_ph,
-                    "n": pr.avg_nitrogen,
-                    "p": pr.avg_phosphorus,
-                    "k": pr.avg_potassium,
-                    "light": pr.avg_light_intensity,
-                },
-            )
-            processed_stored += 1
-        except Exception as e:
-            errors.append(f"processed_reading[{idx}]: {str(e)}")
-
-    # ── 3. Local AI decisions → Events ────────────────────
-    for idx, dec in enumerate(payload.local_decisions):
-        actions_json = json.dumps(dec.actions)
-        try:
-            db.execute(
-                text("""
-                    INSERT INTO Events
-                        (device_id, field_id, event_type,
-                         actions, confidence,
-                         is_executed, executed_at)
-                    VALUES
-                        (:did, :fid, :etype,
-                         :actions, :confidence,
-                         :executed, :executed_at)
-                """),
-                {
-                    "did": payload.base_station_id,
-                    "fid": payload.field_id,
-                    "etype": dec.event_type,
-                    "actions": actions_json,
-                    "confidence": dec.confidence,
-                    "executed": dec.is_executed,
-                    "executed_at": dec.executed_at or now,
-                },
-            )
-            decisions_stored += 1
-        except Exception as e:
-            errors.append(f"decision[{idx}]: {str(e)}")
-
-    try:
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise HTTPException(status_code=500, detail="Failed to commit sync data")
-
-    return {
-        "status": "ok",
-        "base_station_id": payload.base_station_id,
-        "field_id": payload.field_id,
-        "raw_readings_stored": readings_stored,
-        "processed_readings_stored": processed_stored,
-        "local_decisions_stored": decisions_stored,
         "errors": errors if errors else None,
-        "synced_at": now.isoformat(),
     }
 
 
@@ -3542,10 +3353,10 @@ async def web_manual_scan_analyze(
 
     db.execute(
         text("""
-            INSERT INTO Images (image_id, device_id, field_id, image_path, capture_timestamp, file_size)
-            VALUES (:iid, 0, 0, :path, :ts, :size)
+            INSERT INTO Images (image_id, device_id, field_id, image_path, capture_timestamp, file_size, source, user_id)
+            VALUES (:iid, 0, 0, :path, :ts, :size, 'manual', :uid)
         """),
-        {"iid": image_id, "path": filename, "ts": timestamp, "size": len(content)},
+        {"iid": image_id, "path": filename, "ts": timestamp, "size": len(content), "uid": user_id},
     )
 
     db.execute(
@@ -3608,9 +3419,10 @@ def web_manual_scan_list(
             SELECT i.*, r.*
             FROM Images i
             LEFT JOIN AIResults r ON i.image_id = r.image_id
-            WHERE i.field_id = 0
+            WHERE i.source = 'manual' AND i.user_id = :uid
             ORDER BY i.capture_timestamp DESC
         """),
+        {"uid": uid},
     ).mappings().all()
     return {"history": [dict(r) for r in rows]}
 
