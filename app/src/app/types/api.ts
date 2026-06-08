@@ -58,6 +58,8 @@ export interface ScanImage {
   image_path: string;
   capture_timestamp: string;
   file_size: number | null;
+  source?: string;
+  user_id?: number | null;
 }
 
 export interface ScanAnalysis {
@@ -84,4 +86,15 @@ export interface ScanHistoryResponse {
 export interface ScanDetailsResponse {
   image: ScanImage | null;
   analysis: ScanAnalysis | null;
+}
+
+export interface NodeStatusResponse {
+  status: string;
+  summary: {
+    total_nodes: number;
+    active: number;
+    inactive: number;
+    low_battery: number;
+    offline: number;
+  };
 }

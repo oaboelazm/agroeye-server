@@ -1,7 +1,10 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { api } from "../lib/api";
 import { useAuth } from "./AuthContext";
 import type { Farm, Field, Device, NotificationItem, NodeStatusSummary } from "../types/domain";
+import type { Farm as ApiFarm } from "../types/api";
+
+const POLL_INTERVAL_MS = 30000;
 
 interface DashboardData {
   total_fields: number;
@@ -69,25 +72,43 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     if (!user) return;
     setLoading(true);
     try {
-      const res = await api.home.getFarms(user.user_id);
-      setFarms(res.farms);
-      if (res.farms.length > 0 && !activeFarmId) {
-        setActiveFarmId(res.farms[0].farm_id);
-      }
+      const res = await api.web.listFarms();
+      const mapped: Farm[] = (res.farms || []).map((f: ApiFarm) => ({
+        farm_id: f.farm_id,
+        name: f.name,
+        location: f.location || "",
+        area_size: f.area_size || 0,
+        created_at: f.created_at,
+        is_Archived: f.is_Archived,
+        deleted_at: f.deleted_at,
+      }));
+      setFarms(mapped);
+      setActiveFarmIdState((current) => {
+        if (mapped.length > 0 && (!current || !mapped.some((f) => f.farm_id === current))) {
+          const newId = mapped[0].farm_id;
+          try { localStorage.setItem("agroeye_active_farm_id", String(newId)); } catch {}
+          return newId;
+        }
+        if (mapped.length === 0 && current !== null) {
+          try { localStorage.removeItem("agroeye_active_farm_id"); } catch {}
+          return null;
+        }
+        return current;
+      });
     } catch (err) {
       console.error("Failed to fetch farms:", err);
     } finally {
       setLoading(false);
     }
-  }, [user, activeFarmId, setActiveFarmId]);
+  }, [user]);
 
   const refreshFields = useCallback(async (farmId: number) => {
     try {
-      const res = await api.home.getFields(farmId);
+      const res = await api.web.fieldsByFarm(farmId);
       setFields(res.fields);
 
       const devicesPromises = res.fields.map((f) =>
-        api.home.getDevices(f.field_id).then((d) => d.devices)
+        api.web.devicesByField(f.field_id).then((d) => d.devices)
       );
       const devicesResults = await Promise.all(devicesPromises);
       const allDevices = devicesResults.flat().map((d, i) => ({
@@ -99,7 +120,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       setDevices(allDevices);
 
       const statusPromises = res.fields.map((f) =>
-        api.home.getNodeStatus(f.field_id).then((s) => ({ fieldId: f.field_id, summary: s.summary }))
+        api.web.nodeStatus(f.field_id).then((s) => ({ fieldId: f.field_id, summary: s.summary }))
       );
       const statusResults = await Promise.all(statusPromises);
       const statusMap: Record<number, NodeStatusSummary> = {};
@@ -113,14 +134,22 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const refreshNotifications = useCallback(async () => {
-    if (!user || !activeFarmId) return;
+    if (!activeFarmId) return;
     try {
-      const res = await api.home.getNotifications(user.user_id, activeFarmId);
-      setNotifications(res.notifications);
+      const res = await api.web.notificationsList(activeFarmId);
+      setNotifications(res.notifications.map((n) => ({
+        notification_id: n.notification_id,
+        user_id: 0,
+        farm_id: activeFarmId,
+        type: n.type,
+        message: n.message,
+        is_read: n.is_read,
+        sent_at: n.sent_at || "",
+      })));
     } catch (err) {
       console.error("Failed to fetch notifications:", err);
     }
-  }, [user, activeFarmId]);
+  }, [activeFarmId]);
 
   const refreshDashboard = useCallback(async () => {
     if (!activeFarmId) return;
@@ -137,7 +166,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
   const markNotificationAsRead = useCallback(async (id: number) => {
     try {
-      await api.home.markNotificationRead(id);
+      await api.web.markNotificationRead(id);
       setNotifications((prev) =>
         prev.map((n) => (n.notification_id === id ? { ...n, is_read: 1 } : n))
       );
@@ -145,6 +174,15 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       console.error("Failed to mark notification as read:", err);
     }
   }, []);
+
+  const refreshFarmsRef = useRef(refreshFarms);
+  const refreshNotificationsRef = useRef(refreshNotifications);
+  const refreshDashboardRef = useRef(refreshDashboard);
+  const activeFarmIdRef = useRef(activeFarmId);
+  refreshFarmsRef.current = refreshFarms;
+  refreshNotificationsRef.current = refreshNotifications;
+  refreshDashboardRef.current = refreshDashboard;
+  activeFarmIdRef.current = activeFarmId;
 
   useEffect(() => {
     if (isAuthenticated && user) {
@@ -158,10 +196,31 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   }, [isAuthenticated, user, refreshFarms]);
 
   useEffect(() => {
+    if (!isAuthenticated || !user) return;
+    const id = setInterval(async () => {
+      await refreshFarmsRef.current();
+      const fid = activeFarmIdRef.current;
+      if (fid != null) {
+        await Promise.all([
+          refreshNotificationsRef.current(),
+          refreshDashboardRef.current(),
+        ]);
+      }
+    }, POLL_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [isAuthenticated, user]);
+
+  useEffect(() => {
     if (activeFarmId) {
       refreshFields(activeFarmId);
       refreshNotifications();
       refreshDashboard();
+    } else {
+      setFields([]);
+      setDevices([]);
+      setNotifications([]);
+      setNodeStatuses({});
+      setDashboardData(null);
     }
   }, [activeFarmId, refreshFields, refreshNotifications, refreshDashboard]);
 

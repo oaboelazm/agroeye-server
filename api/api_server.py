@@ -14,7 +14,7 @@ from typing import Optional, Generator
 
 from fastapi import APIRouter, FastAPI, UploadFile, File, Form, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -333,7 +333,7 @@ def login_user(data: LoginRequest, db: Session = Depends(get_db)):
 @app.post("/mobile/home/get-farms")
 def get_farms(data: UserFarmsRequest, db: Session = Depends(get_db)):
     rows = db.execute(
-        text("SELECT farm_id, name, location, area_size FROM Farms WHERE user_id = :uid"),
+        text("SELECT farm_id, name, location, area_size FROM Farms WHERE user_id = :uid AND deleted_at IS NULL"),
         {"uid": data.user_id}
     ).mappings().all()
     return {"farms": [dict(r) for r in rows]}
@@ -342,7 +342,7 @@ def get_farms(data: UserFarmsRequest, db: Session = Depends(get_db)):
 @app.post("/mobile/home/get-fields")
 def get_fields(data: FarmFieldsRequest, db: Session = Depends(get_db)):
     rows = db.execute(
-        text("SELECT field_id, name, crop_type, area_size FROM Fields WHERE farm_id = :fid"),
+        text("SELECT field_id, name, crop_type, area_size FROM Fields WHERE farm_id = :fid AND deleted_at IS NULL"),
         {"fid": data.farm_id}
     ).mappings().all()
     return {"fields": [dict(r) for r in rows]}
@@ -760,7 +760,7 @@ def update_farm(data: UpdateFarmRequest, db: Session = Depends(get_db)):
         text("""
             UPDATE Farms
             SET name = :name, location = :location, area_size = :area
-            WHERE farm_id = :fid
+            WHERE farm_id = :fid AND deleted_at IS NULL
         """),
         {
             "fid": data.farm_id,
@@ -780,7 +780,7 @@ def update_farm(data: UpdateFarmRequest, db: Session = Depends(get_db)):
 @app.post("/mobile/manage/delete-farm")
 def delete_farm(data: DeleteFarmRequest, db: Session = Depends(get_db)):
     db.execute(
-        text("DELETE FROM Farms WHERE farm_id = :fid"),
+        text("UPDATE Farms SET deleted_at = NOW() WHERE farm_id = :fid"),
         {"fid": data.farm_id}
     )
     db.commit()
@@ -811,7 +811,7 @@ def update_field(data: UpdateFieldRequest, db: Session = Depends(get_db)):
         text("""
             UPDATE Fields
             SET name = :name, crop_type = :crop, area_size = :area
-            WHERE field_id = :fid
+            WHERE field_id = :fid AND deleted_at IS NULL
         """),
         {
             "fid": data.field_id,
@@ -831,7 +831,7 @@ def update_field(data: UpdateFieldRequest, db: Session = Depends(get_db)):
 @app.post("/mobile/manage/delete-field")
 def delete_field(data: DeleteFieldRequest, db: Session = Depends(get_db)):
     db.execute(
-        text("DELETE FROM Fields WHERE field_id = :fid"),
+        text("UPDATE Fields SET deleted_at = NOW() WHERE field_id = :fid"),
         {"fid": data.field_id}
     )
     db.commit()
@@ -1413,7 +1413,7 @@ def _get_user_id_from_token(token: str = Depends(oauth2_scheme)) -> int:
 
 def _get_farm_ids_for_user(uid: int, db: Session) -> list[int]:
     rows = db.execute(
-        text("SELECT farm_id FROM Farms WHERE user_id = :uid"),
+        text("SELECT farm_id FROM Farms WHERE user_id = :uid AND deleted_at IS NULL AND is_Archived = 0"),
         {"uid": uid}
     ).mappings().all()
     return [r["farm_id"] for r in rows]
@@ -1425,7 +1425,7 @@ def _get_field_ids_for_farms(farm_ids: list[int], db: Session) -> list[int]:
     placeholders = ", ".join([f":fid_{i}" for i in range(len(farm_ids))])
     params = {f"fid_{i}": fid for i, fid in enumerate(farm_ids)}
     rows = db.execute(
-        text(f"SELECT field_id FROM Fields WHERE farm_id IN ({placeholders})"),
+        text(f"SELECT field_id FROM Fields WHERE farm_id IN ({placeholders}) AND deleted_at IS NULL"),
         params
     ).mappings().all()
     return [r["field_id"] for r in rows]
@@ -1506,10 +1506,10 @@ def web_dashboard(
 
         today_irr = db.execute(
             text(f"""
-                SELECT COUNT(*) as c, COALESCE(SUM(TIMESTAMPDIFF(MINUTE, start_time, end_time)), 0) as dur
-                FROM IrrigationEvents
+                SELECT COUNT(*) as c, COALESCE(SUM(TIMESTAMPDIFF(MINUTE, created_at, executed_at)), 0) as dur
+                FROM Events
                 WHERE field_id IN ({fid_placeholders})
-                AND DATE(start_time) = CURDATE()
+                AND DATE(created_at) = CURDATE()
             """),
             fid_params
         ).mappings().first()
@@ -1558,7 +1558,7 @@ def web_fields_list(
         raise HTTPException(status_code=403, detail="Farm not accessible")
 
     rows = db.execute(
-        text("SELECT field_id, name, crop_type, area_size FROM Fields WHERE farm_id = :fid"),
+        text("SELECT field_id, name, crop_type, area_size FROM Fields WHERE farm_id = :fid AND deleted_at IS NULL"),
         {"fid": data.farm_id}
     ).mappings().all()
 
@@ -1589,7 +1589,7 @@ def web_field_overview(
             SELECT f.field_id, f.name, f.crop_type, f.area_size, f.farm_id
             FROM Fields f
             JOIN Farms fa ON f.farm_id = fa.farm_id
-            WHERE f.field_id = :fid AND fa.user_id = :uid
+            WHERE f.field_id = :fid AND fa.user_id = :uid AND f.deleted_at IS NULL
         """),
         {"fid": data.field_id, "uid": uid}
     ).mappings().first()
@@ -1628,18 +1628,18 @@ def web_field_overview(
 
     last_irr = db.execute(
         text("""
-            SELECT start_time FROM IrrigationEvents
-            WHERE field_id = :fid AND start_time <= NOW()
-            ORDER BY start_time DESC LIMIT 1
+            SELECT created_at AS start_time FROM Events
+            WHERE field_id = :fid AND created_at <= NOW()
+            ORDER BY created_at DESC LIMIT 1
         """),
         {"fid": data.field_id}
     ).mappings().first()
 
     next_irr = db.execute(
         text("""
-            SELECT start_time FROM IrrigationEvents
-            WHERE field_id = :fid AND start_time > NOW()
-            ORDER BY start_time ASC LIMIT 1
+            SELECT created_at AS start_time FROM Events
+            WHERE field_id = :fid AND created_at > NOW()
+            ORDER BY created_at ASC LIMIT 1
         """),
         {"fid": data.field_id}
     ).mappings().first()
@@ -1789,13 +1789,14 @@ def web_irrigation_upcoming(
 
     rows = db.execute(
         text(f"""
-            SELECT e.irrigation_id, e.field_id, f.name AS field_name,
-                   e.start_time, e.end_time, e.status
-            FROM IrrigationEvents e
+            SELECT e.event_id AS irrigation_id, e.field_id, f.name AS field_name,
+                   e.created_at AS start_time, e.executed_at AS end_time,
+                   IF(e.is_executed, 'completed', 'scheduled') AS status
+            FROM Events e
             JOIN Fields f ON e.field_id = f.field_id
             WHERE e.field_id IN ({placeholders})
-            AND e.start_time > NOW()
-            ORDER BY e.start_time ASC
+            AND e.created_at > NOW()
+            ORDER BY e.created_at ASC
             LIMIT 5
         """),
         params
@@ -1812,7 +1813,7 @@ def web_irrigation_upcoming(
             field_name=r.get("field_name"),
             start_time=r.get("start_time"),
             end_time=r.get("end_time"),
-            duration_minutes=duration,
+            duration_minutes=duration if duration else 0,
             status=r.get("status", "scheduled"),
         ))
 
@@ -1838,13 +1839,14 @@ def web_irrigation_recent(
 
     rows = db.execute(
         text(f"""
-            SELECT e.irrigation_id, e.field_id, f.name AS field_name,
-                   e.start_time, e.end_time, e.status
-            FROM IrrigationEvents e
+            SELECT e.event_id AS irrigation_id, e.field_id, f.name AS field_name,
+                   e.created_at AS start_time, e.executed_at AS end_time,
+                   IF(e.is_executed, 'completed', 'scheduled') AS status
+            FROM Events e
             JOIN Fields f ON e.field_id = f.field_id
             WHERE e.field_id IN ({placeholders})
-            AND e.start_time <= NOW()
-            ORDER BY e.start_time DESC
+            AND e.created_at <= NOW()
+            ORDER BY e.created_at DESC
             LIMIT 10
         """),
         params
@@ -1861,7 +1863,7 @@ def web_irrigation_recent(
             field_name=r.get("field_name"),
             start_time=r.get("start_time"),
             end_time=r.get("end_time"),
-            duration_minutes=duration,
+            duration_minutes=duration if duration else 0,
             status=r.get("status", "completed"),
         ))
 
@@ -1887,28 +1889,28 @@ def web_irrigation_summary(
 
     today = db.execute(
         text(f"""
-            SELECT COUNT(*) as c, COALESCE(SUM(TIMESTAMPDIFF(MINUTE, start_time, end_time)), 0) as dur
-            FROM IrrigationEvents
+            SELECT COUNT(*) as c, COALESCE(SUM(TIMESTAMPDIFF(MINUTE, created_at, executed_at)), 0) as dur
+            FROM Events
             WHERE field_id IN ({placeholders})
-            AND DATE(start_time) = CURDATE()
+            AND DATE(created_at) = CURDATE()
         """),
         params
     ).mappings().first()
 
     week = db.execute(
         text(f"""
-            SELECT COUNT(*) as c FROM IrrigationEvents
+            SELECT COUNT(*) as c FROM Events
             WHERE field_id IN ({placeholders})
-            AND start_time >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+            AND created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
         """),
         params
     ).mappings().first()
 
     month = db.execute(
         text(f"""
-            SELECT COUNT(*) as c FROM IrrigationEvents
+            SELECT COUNT(*) as c FROM Events
             WHERE field_id IN ({placeholders})
-            AND start_time >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+            AND created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
         """),
         params
     ).mappings().first()
@@ -2008,7 +2010,7 @@ def web_reports_summary(
     irr_fid_ph = ", ".join([f":fid_{i}" for i in range(len(field_ids))])
     irr_fid_params = {f"fid_{i}": fid for i, fid in enumerate(field_ids)}
     irr_row = db.execute(
-        text(f"SELECT COUNT(*) as c FROM IrrigationEvents WHERE field_id IN ({irr_fid_ph})"),
+        text(f"SELECT COUNT(*) as c FROM Events WHERE field_id IN ({irr_fid_ph})"),
         irr_fid_params
     ).mappings().first()
     total_irrigation = irr_row["c"] if irr_row else 0
@@ -2058,7 +2060,7 @@ def web_report_field(
             SELECT f.field_id, f.name
             FROM Fields f
             JOIN Farms fa ON f.farm_id = fa.farm_id
-            WHERE f.field_id = :fid AND fa.user_id = :uid
+            WHERE f.field_id = :fid AND fa.user_id = :uid AND f.deleted_at IS NULL
         """),
         {"fid": data.field_id, "uid": uid}
     ).mappings().first()
@@ -2094,17 +2096,17 @@ def web_report_field(
 
     last_irr = db.execute(
         text("""
-            SELECT start_time FROM IrrigationEvents
-            WHERE field_id = :fid AND start_time <= NOW()
-            ORDER BY start_time DESC LIMIT 1
+            SELECT created_at AS start_time FROM Events
+            WHERE field_id = :fid AND created_at <= NOW()
+            ORDER BY created_at DESC LIMIT 1
         """),
         {"fid": data.field_id}
     ).mappings().first()
 
     irr_30d = db.execute(
         text("""
-            SELECT COUNT(*) as c FROM IrrigationEvents
-            WHERE field_id = :fid AND start_time >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+            SELECT COUNT(*) as c FROM Events
+            WHERE field_id = :fid AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
         """),
         {"fid": data.field_id}
     ).mappings().first()
@@ -2680,6 +2682,749 @@ def web_ai_add_message(
     )
     db.commit()
     return {"status": "ok"}
+
+
+# ── Image Serving ──
+
+
+@webapp_router.get("/images/{filename}")
+def web_serve_image(
+    filename: str,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    file_path = os.path.join(UPLOAD_DIR, filename)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Image not found")
+    return FileResponse(file_path)
+
+
+# ── Rescan (re-run vision AI) ──
+
+
+class WebRescanRequest(BaseModel):
+    image_id: str
+    return_annotated: bool = False
+
+
+@webapp_router.post("/ai/vision/rescan")
+async def web_ai_vision_rescan(
+    data: WebRescanRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    image = db.execute(
+        text("SELECT * FROM Images WHERE image_id = :iid"),
+        {"iid": data.image_id},
+    ).mappings().first()
+    if not image:
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    file_path = os.path.join(UPLOAD_DIR, image["image_path"])
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Image file not found on disk")
+
+    model = _get_vision_model()
+    results = model.predict(source=file_path, verbose=False)
+    result = results[0]
+
+    names = getattr(result, "names", None) or getattr(model, "names", {})
+    detections = []
+    confs = []
+    top_disease = "Unknown"
+    max_conf = 0.0
+    if result.boxes is not None and len(result.boxes) > 0:
+        xyxy = result.boxes.xyxy.tolist()
+        conf = result.boxes.conf.tolist()
+        cls_ids = result.boxes.cls.tolist()
+        for i in range(len(xyxy)):
+            cls_id = int(cls_ids[i])
+            label = names.get(cls_id, str(cls_id)) if isinstance(names, dict) else str(cls_id)
+            score = float(conf[i])
+            confs.append(score)
+            detections.append({"label": label, "confidence": score, "bbox_xyxy": [float(v) for v in xyxy[i]]})
+        max_conf = max(confs)
+        top_disease = detections[confs.index(max_conf)]["label"]
+
+    recommendation = _generate_recommendation(top_disease)
+
+    response = {
+        "status": "ok",
+        "image_id": data.image_id,
+        "detections": detections,
+        "max_confidence": float(max_conf),
+        "count": len(detections),
+        "analysis": {
+            "disease_detected": top_disease,
+            "confidence_score": float(max_conf),
+            "recommendation": recommendation,
+        },
+    }
+
+    if data.return_annotated:
+        import cv2
+        annotated = result.plot()
+        ok, encoded = cv2.imencode(".jpg", annotated)
+        if ok:
+            response["annotated_image_base64"] = base64.b64encode(encoded.tobytes()).decode("utf-8")
+            response["annotated_image_format"] = "jpg"
+
+    return response
+
+
+# ── Webapp Farm Management (excludes deleted/archived) ──
+
+
+class WebFarmActionRequest(BaseModel):
+    farm_id: int
+
+
+class WebFarmCreateRequest(BaseModel):
+    name: str
+    location: str
+    area_size: float
+
+
+@webapp_router.post("/farms/list")
+def web_farms_list(
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    rows = db.execute(
+        text("""
+            SELECT farm_id, name, location, area_size, created_at, is_Archived, deleted_at
+            FROM Farms
+            WHERE user_id = :uid AND deleted_at IS NULL AND is_Archived = 0
+            ORDER BY created_at DESC
+        """),
+        {"uid": uid},
+    ).mappings().all()
+    return {"farms": [dict(r) for r in rows]}
+
+
+@webapp_router.post("/farms/archive")
+def web_farm_archive(
+    data: WebFarmActionRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    farm_ids = _get_farm_ids_for_user(uid, db)
+    if data.farm_id not in farm_ids:
+        raise HTTPException(status_code=403, detail="Farm not accessible")
+    db.execute(
+        text("UPDATE Farms SET is_Archived = 1 WHERE farm_id = :fid"),
+        {"fid": data.farm_id},
+    )
+    db.commit()
+    return {"status": "ok", "message": "Farm archived"}
+
+
+@webapp_router.post("/farms/unarchive")
+def web_farm_unarchive(
+    data: WebFarmActionRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    row = db.execute(
+        text("SELECT farm_id FROM Farms WHERE farm_id = :fid AND user_id = :uid AND deleted_at IS NULL"),
+        {"fid": data.farm_id, "uid": uid},
+    ).mappings().first()
+    if not row:
+        raise HTTPException(status_code=403, detail="Farm not accessible")
+    db.execute(
+        text("UPDATE Farms SET is_Archived = 0 WHERE farm_id = :fid"),
+        {"fid": data.farm_id},
+    )
+    db.commit()
+    return {"status": "ok", "message": "Farm unarchived"}
+
+
+@webapp_router.post("/farms/delete")
+def web_farm_soft_delete(
+    data: WebFarmActionRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    farm_ids = _get_farm_ids_for_user(uid, db)
+    if data.farm_id not in farm_ids:
+        raise HTTPException(status_code=403, detail="Farm not accessible")
+    db.execute(
+        text("UPDATE Farms SET deleted_at = NOW() WHERE farm_id = :fid"),
+        {"fid": data.farm_id},
+    )
+    db.commit()
+    return {"status": "ok", "message": "Farm deleted"}
+
+
+@webapp_router.post("/farms/archived-list")
+def web_farms_archived_list(
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    rows = db.execute(
+        text("""
+            SELECT farm_id, name, location, area_size, created_at, is_Archived, deleted_at
+            FROM Farms
+            WHERE user_id = :uid AND deleted_at IS NULL AND is_Archived = 1
+            ORDER BY created_at DESC
+        """),
+        {"uid": uid},
+    ).mappings().all()
+    return {"farms": [dict(r) for r in rows]}
+
+
+# ── Webapp Fields by Farm (matches mobile /mobile/home/get-fields shape) ──
+
+
+@webapp_router.post("/fields/by-farm")
+def web_fields_by_farm(
+    data: web_schemas.WebFieldsByFarmRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    farm_ids = _get_farm_ids_for_user(uid, db)
+    if data.farm_id not in farm_ids:
+        raise HTTPException(status_code=403, detail="Farm not accessible")
+    rows = db.execute(
+        text("SELECT field_id, name, crop_type, area_size FROM Fields WHERE farm_id = :fid AND deleted_at IS NULL"),
+        {"fid": data.farm_id},
+    ).mappings().all()
+    return {"fields": [dict(r) for r in rows]}
+
+
+# ── Webapp Devices by Field (matches mobile /mobile/home/get-devices shape) ──
+
+
+@webapp_router.post("/devices/by-field")
+def web_devices_by_field(
+    data: web_schemas.WebDevicesByFieldRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    field_ids = _get_field_ids_for_farms(_get_farm_ids_for_user(uid, db), db)
+    if data.field_id not in field_ids:
+        raise HTTPException(status_code=403, detail="Field not accessible")
+    rows = db.execute(
+        text("""
+            SELECT device_id, device_type, serial_number, location_coords, status
+            FROM Devices WHERE field_id = :fid
+        """),
+        {"fid": data.field_id},
+    ).mappings().all()
+    return {"devices": [dict(r) for r in rows]}
+
+
+# ── Webapp Node Status (matches mobile /mobile/home/get-node-status shape) ──
+
+
+@webapp_router.post("/devices/node-status")
+def web_node_status(
+    data: web_schemas.WebNodeStatusRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    field_ids = _get_field_ids_for_farms(_get_farm_ids_for_user(uid, db), db)
+    if data.field_id not in field_ids:
+        raise HTTPException(status_code=403, detail="Field not accessible")
+
+    devices = db.execute(
+        text("SELECT device_id FROM Devices WHERE field_id = :fid"),
+        {"fid": data.field_id},
+    ).mappings().all()
+
+    if not devices:
+        return {"status": "success", "summary": {"total_nodes": 0, "active": 0, "inactive": 0, "low_battery": 0, "offline": 0}}
+
+    device_ids = [d["device_id"] for d in devices]
+    id_placeholders = ", ".join([f":did_{i}" for i in range(len(device_ids))])
+    id_params = {f"did_{i}": did for i, did in enumerate(device_ids)}
+
+    rows = db.execute(
+        text(f"""
+            SELECT status, COUNT(*) as count
+            FROM SensingNodes
+            WHERE device_id IN ({id_placeholders})
+            GROUP BY status
+        """),
+        id_params,
+    ).mappings().all()
+
+    low_battery = db.execute(
+        text(f"""
+            SELECT COUNT(*) as count
+            FROM SensingNodes
+            WHERE device_id IN ({id_placeholders}) AND battery_level < 20
+        """),
+        id_params,
+    ).mappings().first()
+
+    result = {"total_nodes": 0, "active": 0, "inactive": 0, "low_battery": 0, "offline": 0}
+    for r in rows:
+        status = r["status"]
+        count = r["count"]
+        result["total_nodes"] += count
+        if status in result:
+            result[status] = count
+    result["low_battery"] = low_battery["count"] if low_battery else 0
+
+    return {"status": "success", "summary": result}
+
+
+# ── Webapp Field Readings (matches mobile /mobile/reports/get-readings shape) ──
+
+
+@webapp_router.post("/reports/field-readings")
+def web_field_readings(
+    data: web_schemas.WebFieldReadingsRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    field_ids = _get_field_ids_for_farms(_get_farm_ids_for_user(uid, db), db)
+    if data.field_id not in field_ids:
+        raise HTTPException(status_code=403, detail="Field not accessible")
+
+    devices = db.execute(
+        text("SELECT device_id FROM Devices WHERE field_id = :fid"),
+        {"fid": data.field_id},
+    ).mappings().all()
+
+    if not devices:
+        return {"readings": []}
+
+    device_ids = [d["device_id"] for d in devices]
+    id_placeholders = ", ".join([f":did_{i}" for i in range(len(device_ids))])
+    id_params = {f"did_{i}": did for i, did in enumerate(device_ids)}
+    id_params["start"] = data.from_date
+    id_params["end"] = data.to_date
+
+    rows = db.execute(
+        text(f"""
+            SELECT *
+            FROM SensorReadings
+            WHERE device_id IN ({id_placeholders})
+            AND timestamp BETWEEN :start AND :end
+            ORDER BY timestamp ASC
+        """),
+        id_params,
+    ).mappings().all()
+
+    return {"readings": [dict(r) for r in rows]}
+
+
+# ── Webapp Field Summary (matches mobile /mobile/reports/get-summary shape) ──
+
+
+@webapp_router.post("/reports/field-summary")
+def web_field_summary(
+    data: web_schemas.WebFieldSummaryRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    field_ids = _get_field_ids_for_farms(_get_farm_ids_for_user(uid, db), db)
+    if data.field_id not in field_ids:
+        raise HTTPException(status_code=403, detail="Field not accessible")
+
+    devices = db.execute(
+        text("SELECT device_id FROM Devices WHERE field_id = :fid"),
+        {"fid": data.field_id},
+    ).mappings().all()
+
+    if not devices:
+        return {"devices_count": 0, "latest_reading": None, "averages": {}, "irrigation_summary": {}}
+
+    device_ids = [d["device_id"] for d in devices]
+    id_placeholders = ", ".join([f":did_{i}" for i in range(len(device_ids))])
+    id_params = {f"did_{i}": did for i, did in enumerate(device_ids)}
+
+    avg_data = db.execute(
+        text(f"""
+            SELECT
+                AVG(temperature_air) AS avg_air_temp,
+                AVG(humidity_air) AS avg_air_humidity,
+                AVG(temperature_soil) AS avg_soil_temp,
+                AVG(humidity_soil) AS avg_soil_humidity,
+                AVG(soil_moisture) AS avg_soil_moist,
+                AVG(soil_ph) AS avg_soil_ph,
+                AVG(nitrogen) AS avg_nitrogen,
+                AVG(phosphorus) AS avg_phosphorus,
+                AVG(potassium) AS avg_potassium,
+                AVG(conductivity) AS avg_conductivity,
+                AVG(light_intensity) AS avg_light,
+                AVG(co2) AS avg_co2
+            FROM SensorReadings
+            WHERE device_id IN ({id_placeholders})
+        """),
+        id_params,
+    ).mappings().first()
+
+    latest_reading = db.execute(
+        text(f"""
+            SELECT device_id, timestamp, temperature_air, humidity_air, temperature_soil,
+                   humidity_soil, soil_moisture, soil_ph, nitrogen, phosphorus, potassium,
+                   conductivity, light_intensity, co2
+            FROM SensorReadings
+            WHERE device_id IN ({id_placeholders})
+            ORDER BY timestamp DESC LIMIT 1
+        """),
+        id_params,
+    ).mappings().first()
+
+    last_irrigation = db.execute(
+        text("""
+            SELECT
+                event_id AS irrigation_id,
+                field_id,
+                created_at AS start_time,
+                executed_at AS end_time,
+                duration_minutes,
+                CASE WHEN is_executed = 1 THEN 'completed' ELSE 'scheduled' END AS status
+            FROM Events
+            WHERE field_id = :fid
+            ORDER BY created_at DESC LIMIT 1
+        """),
+        {"fid": data.field_id},
+    ).mappings().first()
+
+    irrigation30 = db.execute(
+        text("""
+            SELECT COUNT(*) AS events_count
+            FROM Events
+            WHERE field_id = :fid AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+        """),
+        {"fid": data.field_id},
+    ).mappings().first()
+
+    return {
+        "devices_count": len(devices),
+        "latest_reading": dict(latest_reading) if latest_reading else None,
+        "averages": dict(avg_data) if avg_data else {},
+        "irrigation_summary": {
+            "last_event": dict(last_irrigation) if last_irrigation else None,
+            "events_last_30_days": irrigation30["events_count"] if irrigation30 else 0,
+        },
+    }
+
+
+# ── Webapp Scan History (matches mobile /mobile/scan/history shape) ──
+
+
+@webapp_router.post("/scans/history")
+def web_scan_history(
+    data: web_schemas.WebScanHistoryRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    field_ids = _get_field_ids_for_farms(_get_farm_ids_for_user(uid, db), db)
+    if data.field_id not in field_ids:
+        raise HTTPException(status_code=403, detail="Field not accessible")
+    rows = db.execute(
+        text("""
+            SELECT i.*, r.*
+            FROM Images i
+            LEFT JOIN AIResults r ON i.image_id = r.image_id
+            WHERE i.field_id = :fid
+            ORDER BY i.capture_timestamp DESC
+        """),
+        {"fid": data.field_id},
+    ).mappings().all()
+    return {"history": [dict(r) for r in rows]}
+
+
+# ── Webapp Update Device (matches mobile /mobile/manage/update-device shape) ──
+
+
+@webapp_router.post("/manage/update-device")
+def web_update_device(
+    data: web_schemas.WebUpdateDeviceRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    device = db.execute(
+        text("""
+            SELECT d.device_id FROM Devices d
+            JOIN Fields f ON d.field_id = f.field_id
+            JOIN Farms fa ON f.farm_id = fa.farm_id
+            WHERE d.device_id = :did AND fa.user_id = :uid
+        """),
+        {"did": data.device_id, "uid": uid},
+    ).mappings().first()
+    if not device:
+        raise HTTPException(status_code=403, detail="Device not accessible")
+
+    fields = {k: v for k, v in data.model_dump().items() if v is not None and k != "device_id"}
+    if not fields:
+        return {"status": "error", "message": "No fields provided"}
+
+    set_clause = ", ".join(f"{k} = :{k}" for k in fields.keys())
+    fields["device_id"] = data.device_id
+
+    db.execute(
+        text(f"UPDATE Devices SET {set_clause} WHERE device_id = :device_id"),
+        fields,
+    )
+    db.commit()
+    return {"status": "success", "message": "Device updated"}
+
+
+# ── Webapp Create Farm ──
+
+
+@webapp_router.post("/farms/create")
+def web_farm_create(
+    data: web_schemas.WebFarmCreateRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    db.execute(
+        text("""
+            INSERT INTO Farms (user_id, name, location, area_size)
+            VALUES (:uid, :name, :location, :area)
+        """),
+        {"uid": uid, "name": data.name, "location": data.location, "area": data.area_size},
+    )
+    db.commit()
+    return {"status": "success", "message": "Farm created"}
+
+
+# ── Webapp Update Farm ──
+
+
+@webapp_router.post("/farms/update")
+def web_farm_update(
+    data: web_schemas.WebFarmUpdateRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    farm_ids = _get_farm_ids_for_user(uid, db)
+    if data.farm_id not in farm_ids:
+        raise HTTPException(status_code=403, detail="Farm not accessible")
+
+    result = db.execute(
+        text("""
+            UPDATE Farms SET name = :name, location = :location, area_size = :area
+            WHERE farm_id = :fid
+        """),
+        {"fid": data.farm_id, "name": data.name, "location": data.location, "area": data.area_size},
+    )
+    db.commit()
+
+    if result.rowcount == 0:
+        return {"status": "error", "message": "Farm not found"}
+
+    return {"status": "success", "message": "Farm updated"}
+
+
+# ── Webapp Create Field ──
+
+
+@webapp_router.post("/fields/create")
+def web_field_create(
+    data: web_schemas.WebFieldCreateRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    farm_ids = _get_farm_ids_for_user(uid, db)
+    if data.farm_id not in farm_ids:
+        raise HTTPException(status_code=403, detail="Farm not accessible")
+
+    db.execute(
+        text("""
+            INSERT INTO Fields (farm_id, name, crop_type, area_size)
+            VALUES (:fid, :name, :crop, :area)
+        """),
+        {"fid": data.farm_id, "name": data.name, "crop": data.crop_type, "area": data.area_size},
+    )
+    db.commit()
+    return {"status": "success", "message": "Field created"}
+
+
+# ── Webapp Update Field ──
+
+
+@webapp_router.post("/fields/update")
+def web_field_update(
+    data: web_schemas.WebFieldUpdateRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    field = db.execute(
+        text("""
+            SELECT f.field_id FROM Fields f
+            JOIN Farms fa ON f.farm_id = fa.farm_id
+            WHERE f.field_id = :fid AND fa.user_id = :uid AND f.deleted_at IS NULL
+        """),
+        {"fid": data.field_id, "uid": uid},
+    ).mappings().first()
+    if not field:
+        raise HTTPException(status_code=403, detail="Field not accessible")
+
+    result = db.execute(
+        text("""
+            UPDATE Fields SET name = :name, crop_type = :crop, area_size = :area
+            WHERE field_id = :fid
+        """),
+        {"fid": data.field_id, "name": data.name, "crop": data.crop_type, "area": data.area_size},
+    )
+    db.commit()
+
+    if result.rowcount == 0:
+        return {"status": "error", "message": "Field not found"}
+
+    return {"status": "success", "message": "Field updated"}
+
+
+# ── Webapp Delete Field ──
+
+
+@webapp_router.post("/fields/delete")
+def web_field_delete(
+    data: web_schemas.WebFieldDeleteRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    field = db.execute(
+        text("""
+            SELECT f.field_id FROM Fields f
+            JOIN Farms fa ON f.farm_id = fa.farm_id
+            WHERE f.field_id = :fid AND fa.user_id = :uid AND f.deleted_at IS NULL
+        """),
+        {"fid": data.field_id, "uid": uid},
+    ).mappings().first()
+    if not field:
+        raise HTTPException(status_code=403, detail="Field not accessible")
+
+    db.execute(
+        text("UPDATE Fields SET deleted_at = NOW() WHERE field_id = :fid"),
+        {"fid": data.field_id},
+    )
+    db.commit()
+    return {"status": "success", "message": "Field deleted"}
+
+
+# ── Manual Scan (from mobile, no field/device) ──
+
+
+@webapp_router.post("/scans/manual-analyze")
+async def web_manual_scan_analyze(
+    image_file: UploadFile = File(...),
+    user_id: int = Form(0),
+    return_annotated: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
+):
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+    timestamp = datetime.now(timezone.utc)
+    ts_str = timestamp.strftime("%Y%m%dT%H%M%SZ")
+    ext = os.path.splitext(image_file.filename or "")[1].lstrip(".") or "jpg"
+
+    image_id = str(uuid.uuid4())
+    filename = f"scan_{uuid.uuid4()}.{ext}"
+    file_path = os.path.join(UPLOAD_DIR, filename)
+
+    content = await image_file.read()
+    with open(file_path, "wb") as f:
+        f.write(content)
+
+    model = _get_vision_model()
+    results = model.predict(source=file_path, verbose=False)
+    result = results[0]
+
+    names = getattr(result, "names", None) or getattr(model, "names", {})
+    detections = []
+    confs = []
+    top_disease = "Unknown"
+    max_conf = 0.0
+    if result.boxes is not None and len(result.boxes) > 0:
+        xyxy = result.boxes.xyxy.tolist()
+        conf = result.boxes.conf.tolist()
+        cls_ids = result.boxes.cls.tolist()
+        for i in range(len(xyxy)):
+            cls_id = int(cls_ids[i])
+            label = names.get(cls_id, str(cls_id)) if isinstance(names, dict) else str(cls_id)
+            score = float(conf[i])
+            confs.append(score)
+            detections.append(
+                {"label": label, "confidence": score, "bbox_xyxy": [float(v) for v in xyxy[i]]}
+            )
+        max_conf = max(confs)
+        top_disease = detections[confs.index(max_conf)]["label"]
+
+    recommendation = _generate_recommendation(top_disease)
+
+    db.execute(
+        text("""
+            INSERT INTO Images (image_id, device_id, field_id, image_path, capture_timestamp, file_size, source, user_id)
+            VALUES (:iid, 0, 0, :path, :ts, :size, 'manual', :uid)
+        """),
+        {"iid": image_id, "path": filename, "ts": timestamp, "size": len(content), "uid": user_id},
+    )
+
+    db.execute(
+        text("""
+            INSERT INTO AIResults (image_id, disease_detected, confidence_score, recommendation, analysis_timestamp)
+            VALUES (:iid, :disease, :confidence, :recommendation, :ts)
+        """),
+        {
+            "iid": image_id,
+            "disease": top_disease,
+            "confidence": round(max_conf, 4),
+            "recommendation": recommendation,
+            "ts": timestamp,
+        },
+    )
+    db.commit()
+
+    annotated_b64 = None
+    if _to_bool(return_annotated):
+        import cv2
+        annotated = result.plot()
+        ok, encoded = cv2.imencode(".jpg", annotated)
+        if not ok:
+            raise RuntimeError("Failed to encode annotated image")
+        annotated_b64 = base64.b64encode(encoded.tobytes()).decode("utf-8")
+
+    response = {
+        "status": "ok",
+        "image_id": image_id,
+        "filename": filename,
+        "meta": {
+            "timestamp_utc": ts_str,
+            "user_id": user_id,
+            "source": "manual",
+        },
+        "detections": detections,
+        "max_confidence": float(max_conf),
+        "count": len(detections),
+        "analysis": {
+            "disease_detected": top_disease,
+            "confidence_score": float(max_conf),
+            "recommendation": recommendation,
+        },
+    }
+
+    if annotated_b64 is not None:
+        response["annotated_image_base64"] = annotated_b64
+        response["annotated_image_format"] = "jpg"
+
+    return response
+
+
+@webapp_router.post("/scans/manual-list")
+def web_manual_scan_list(
+    db: Session = Depends(get_db),
+    uid: int = Depends(_get_user_id_from_token),
+):
+    rows = db.execute(
+        text("""
+            SELECT i.*, r.*
+            FROM Images i
+            LEFT JOIN AIResults r ON i.image_id = r.image_id
+            WHERE i.source = 'manual' AND i.user_id = :uid
+            ORDER BY i.capture_timestamp DESC
+        """),
+        {"uid": uid},
+    ).mappings().all()
+    return {"history": [dict(r) for r in rows]}
 
 
 app.include_router(webapp_router)

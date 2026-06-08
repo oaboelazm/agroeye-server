@@ -1,3 +1,5 @@
+import type { Farm, ScanHistoryResponse, ScanDetailsResponse, ChatSession, ChatSessionMessage, NodeStatusResponse } from "../types/api";
+
 const BASE_URL = "/api";
 
 let logoutHandler: (() => void) | null = null;
@@ -185,6 +187,25 @@ export const api = {
       }>("/mobile/reports/get-summary", { field_id: fieldId }),
   },
 
+  imageUrl: (filename: string) => {
+    const token = getToken();
+    return `${BASE_URL}/webapp/images/${encodeURIComponent(filename)}?token=${token || ""}`;
+  },
+
+  fetchImageAsBlob: async (filename: string): Promise<string | null> => {
+    const token = getToken();
+    try {
+      const res = await fetch(`${BASE_URL}/webapp/images/${encodeURIComponent(filename)}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) return null;
+      const blob = await res.blob();
+      return URL.createObjectURL(blob);
+    } catch {
+      return null;
+    }
+  },
+
   scan: {
     upload: (deviceId: number, fieldId: number, file: File) => {
       const fd = new FormData();
@@ -224,6 +245,26 @@ export const api = {
         annotated_image_base64?: string;
       }>("/ai/vision/analyze", fd);
     },
+
+    manualAnalyze: (file: File, returnAnnotated?: boolean) => {
+      const fd = new FormData();
+      fd.append("image_file", file);
+      if (returnAnnotated) fd.append("return_annotated", "true");
+      return uploadFile<{
+        status: string;
+        image_id: string;
+        filename: string;
+        meta: { timestamp_utc: string; source: string };
+        detections: Array<{ label: string; confidence: number; bbox_xyxy: number[] }>;
+        max_confidence: number;
+        count: number;
+        analysis: { disease_detected: string; confidence_score: number; recommendation: string };
+        annotated_image_base64?: string;
+      }>("/webapp/scans/manual-analyze", fd);
+    },
+
+    manualList: () =>
+      request<ScanHistoryResponse>("/webapp/scans/manual-list", {}),
   },
 
   ai: {
@@ -325,6 +366,17 @@ export const api = {
         suggestions: Array<{ title: string; subtitle: string; prompt: string }>;
       }>("/webapp/ai/suggestions", data),
 
+    rescan: (imageId: string, returnAnnotated?: boolean) =>
+      request<{
+        status: string;
+        image_id: string;
+        detections: Array<{ label: string; confidence: number; bbox_xyxy: number[] }>;
+        max_confidence: number;
+        count: number;
+        analysis: { disease_detected: string; confidence_score: number; recommendation: string };
+        annotated_image_base64?: string;
+      }>("/webapp/ai/vision/rescan", { image_id: imageId, return_annotated: returnAnnotated ?? false }),
+
     listSessions: () =>
       request<{ sessions: ChatSession[] }>("/webapp/ai/sessions/list", {}),
 
@@ -343,6 +395,20 @@ export const api = {
   },
 
   web: {
+    listFarms: () =>
+      request<{ farms: Farm[] }>("/webapp/farms/list", {}),
+
+    archiveFarm: (farmId: number) =>
+      request<{ status: string; message: string }>("/webapp/farms/archive", { farm_id: farmId }),
+
+    unarchiveFarm: (farmId: number) =>
+      request<{ status: string; message: string }>("/webapp/farms/unarchive", { farm_id: farmId }),
+
+    deleteFarm: (farmId: number) =>
+      request<{ status: string; message: string }>("/webapp/farms/delete", { farm_id: farmId }),
+
+    archivedFarms: () =>
+      request<{ farms: Farm[] }>("/webapp/farms/archived-list", {}),
     dashboard: (farmId?: number) =>
       request<{
         total_fields: number;
@@ -504,5 +570,54 @@ export const api = {
       request<{
         readings: Array<Record<string, unknown>>;
       }>("/webapp/sensors/latest", { device_id: deviceId, farm_id: farmId }),
+
+    fieldsByFarm: (farmId: number) =>
+      request<{
+        fields: Array<{ field_id: number; name: string; crop_type: string; area_size: number }>;
+      }>("/webapp/fields/by-farm", { farm_id: farmId }),
+
+    devicesByField: (fieldId: number) =>
+      request<{
+        devices: Array<{ device_id: number; device_type: string; serial_number: string; location_coords: string | null; status: string }>;
+      }>("/webapp/devices/by-field", { field_id: fieldId }),
+
+    nodeStatus: (fieldId: number) =>
+      request<NodeStatusResponse>("/webapp/devices/node-status", { field_id: fieldId }),
+
+    fieldReadings: (fieldId: number, fromDate: string, toDate: string) =>
+      request<{ readings: Array<Record<string, unknown>> }>("/webapp/reports/field-readings", {
+        field_id: fieldId,
+        from_date: fromDate,
+        to_date: toDate,
+      }),
+
+    fieldSummary: (fieldId: number) =>
+      request<{
+        devices_count: number;
+        latest_reading: Record<string, unknown> | null;
+        averages: Record<string, unknown>;
+        irrigation_summary: { last_event: Record<string, unknown> | null; events_last_30_days: number };
+      }>("/webapp/reports/field-summary", { field_id: fieldId }),
+
+    scanHistory: (fieldId: number) =>
+      request<ScanHistoryResponse>("/webapp/scans/history", { field_id: fieldId }),
+
+    updateDevice: (data: { device_id: number; device_type?: string; serial_number?: string; location_coords?: string; status?: string }) =>
+      request<{ status: string; message: string }>("/webapp/manage/update-device", data),
+
+    createFarm: (data: { name: string; location: string; area_size: number }) =>
+      request<{ status: string; message: string }>("/webapp/farms/create", data),
+
+    updateFarm: (data: { farm_id: number; name: string; location: string; area_size: number }) =>
+      request<{ status: string; message: string }>("/webapp/farms/update", data),
+
+    createField: (data: { farm_id: number; name: string; crop_type: string; area_size: number }) =>
+      request<{ status: string; message: string }>("/webapp/fields/create", data),
+
+    updateField: (data: { field_id: number; name: string; crop_type: string; area_size: number }) =>
+      request<{ status: string; message: string }>("/webapp/fields/update", data),
+
+    deleteField: (fieldId: number) =>
+      request<{ status: string; message: string }>("/webapp/fields/delete", { field_id: fieldId }),
   },
 };

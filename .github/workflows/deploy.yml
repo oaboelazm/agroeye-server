@@ -25,7 +25,8 @@ jobs:
             cd ~/Desktop/agroeye-server
 
             echo "==> Pulling latest code..."
-            git pull origin main
+              git fetch origin
+              git reset --hard origin/main
 
             echo "==> Ensuring external networks exist..."
             docker network create edge_net 2>/dev/null || true
