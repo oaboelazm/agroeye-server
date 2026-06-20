@@ -1,14 +1,12 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Activity,
-  Battery,
   Droplets,
   Thermometer,
   Wind,
   Zap,
   Sun,
   AlertTriangle,
-  WifiOff,
   Sprout,
   ScanLine,
 } from "lucide-react";
@@ -17,19 +15,34 @@ import { api } from "../../lib/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import { Badge } from "../../components/ui/badge";
 import { Skeleton } from "../../components/ui/skeleton";
-import { ScrollArea } from "../../components/ui/scroll-area";
-import type { FieldSummary } from "../../types/domain";
+
+
+interface SensorReading {
+  device_id: number;
+  timestamp?: string;
+  temperature_air?: number | null;
+  humidity_air?: number | null;
+  temperature_soil?: number | null;
+  humidity_soil?: number | null;
+  soil_moisture?: number | null;
+  soil_ph?: number | null;
+  nitrogen?: number | null;
+  phosphorus?: number | null;
+  potassium?: number | null;
+  conductivity?: number | null;
+  light_intensity?: number | null;
+  co2?: number | null;
+}
 
 export function OverviewPage() {
-  const { farms, fields, devices, nodeStatuses, activeFarmId, dashboardData, dashboardLoading, loading } = useAppData();
-  const [summaries, setSummaries] = useState<Record<number, FieldSummary>>({});
-  const [summariesLoading, setSummariesLoading] = useState(false);
-  const cacheRef = useRef<Record<number, FieldSummary>>({});
+  const { farms, fields, devices, nodeStatuses, activeFarmId, dashboardData, loading } = useAppData();
+  const [latestReadings, setLatestReadings] = useState<SensorReading[]>([]);
+  const [readingsLoading, setReadingsLoading] = useState(false);
 
   const activeFarm = farms.find((f) => f.farm_id === activeFarmId);
 
   const totalFields = dashboardData?.total_fields ?? fields.length;
-  const onlineDevices = dashboardData?.active_devices ?? devices.filter((d) => d.status === "online").length;
+  const onlineDevices = dashboardData?.active_devices ?? devices.filter((d) => d.status === "active").length;
   const totalNodes = dashboardData?.total_nodes ?? Object.values(nodeStatuses).reduce((sum, s) => sum + s.total_nodes, 0);
   const activeNodes = dashboardData?.active_nodes ?? Object.values(nodeStatuses).reduce((sum, s) => sum + s.active, 0);
   const lowBatteryNodes = dashboardData?.low_battery_nodes ?? Object.values(nodeStatuses).reduce((sum, s) => sum + s.low_battery, 0);
@@ -39,48 +52,24 @@ export function OverviewPage() {
   );
 
   useEffect(() => {
-    if (fields.length === 0) return;
-    setSummariesLoading(true);
-    const fetchSummaries = async () => {
-      const results: Record<number, FieldSummary> = {};
-      for (const field of fields) {
-        if (cacheRef.current[field.field_id]) {
-          results[field.field_id] = cacheRef.current[field.field_id];
-          continue;
-        }
-        try {
-          const summary = await api.web.fieldSummary(field.field_id);
-          cacheRef.current[field.field_id] = summary;
-          results[field.field_id] = summary;
-        } catch {
-          results[field.field_id] = {
-            devices_count: 0,
-            latest_reading: null,
-            averages: {},
-            irrigation_summary: { last_event: null, events_last_30_days: 0 },
-          };
-        }
-      }
-      setSummaries(results);
-      setSummariesLoading(false);
-    };
-    fetchSummaries();
-  }, [fields]);
+    if (!activeFarmId) return;
+    setReadingsLoading(true);
+    api.web.sensorsLatest(undefined, activeFarmId)
+      .then((res) => setLatestReadings((res.readings ?? []) as SensorReading[]))
+      .catch(() => setLatestReadings([]))
+      .finally(() => setReadingsLoading(false));
+  }, [activeFarmId]);
 
-  const latestReadings = Object.values(summaries)
-    .map((s) => s.latest_reading)
-    .filter(Boolean);
+  const readingsByField = latestReadings.reduce<Record<number, SensorReading[]>>((acc, r) => {
+    const device = devices.find((d) => d.device_id === r.device_id);
+    const fid = device?.field_id ?? 0;
+    if (!acc[fid]) acc[fid] = [];
+    acc[fid].push(r);
+    return acc;
+  }, {});
 
-  const latestReading = latestReadings[0] as Record<string, unknown> | null;
-
-  const totalIrrigationEvents = Object.values(summaries).reduce(
-    (sum, s) => sum + (s.irrigation_summary?.events_last_30_days ?? 0),
-    0
-  );
-
-  const lastIrrigationEvent = Object.values(summaries)
-    .map((s) => s.irrigation_summary?.last_event)
-    .filter(Boolean)[0];
+  const totalIrrigationEvents = dashboardData?.today_irrigation_events ?? 0;
+  const todayIrrigationDuration = dashboardData?.today_irrigation_duration_minutes ?? 0;
 
   if (loading) {
     return (
@@ -125,73 +114,69 @@ export function OverviewPage() {
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        {/* B. Live Sensor Panel */}
+          {/* B. Live Sensor Panel */}
         <div className="xl:col-span-2 space-y-6">
           <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
             <CardHeader>
               <CardTitle>Live Sensor Readings</CardTitle>
-              <CardDescription>Latest data from active sensor nodes</CardDescription>
+              <CardDescription>Latest data from active sensor nodes across all fields</CardDescription>
             </CardHeader>
             <CardContent>
-              {summariesLoading ? (
+              {readingsLoading ? (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   {[1, 2, 3, 4].map((i) => (
                     <Skeleton key={i} className="h-24 rounded-xl" />
                   ))}
                 </div>
-              ) : latestReading ? (
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <SensorMetric
-                    title="Air Temp"
-                    value={latestReading.temperature_air != null ? `${Number(latestReading.temperature_air).toFixed(1)}°C` : "N/A"}
-                    icon={Thermometer}
-                    color="text-orange-500"
-                  />
-                  <SensorMetric
-                    title="Humidity"
-                    value={latestReading.humidity_air != null ? `${Number(latestReading.humidity_air).toFixed(0)}%` : "N/A"}
-                    icon={Wind}
-                    color="text-blue-500"
-                  />
-                  <SensorMetric
-                    title="Soil Moisture"
-                    value={latestReading.soil_moisture != null ? `${Number(latestReading.soil_moisture).toFixed(0)}%` : "N/A"}
-                    icon={Droplets}
-                    color="text-emerald-500"
-                  />
-                  <SensorMetric
-                    title="Soil Temp"
-                    value={latestReading.temperature_soil != null ? `${Number(latestReading.temperature_soil).toFixed(1)}°C` : "N/A"}
-                    icon={Thermometer}
-                    color="text-orange-400"
-                  />
-                  <SensorMetric
-                    title="Light"
-                    value={latestReading.light_intensity != null ? `${Number(latestReading.light_intensity).toFixed(0)} lx` : "N/A"}
-                    icon={Sun}
-                    color="text-yellow-500"
-                  />
-                  <SensorMetric
-                    title="CO2"
-                    value={latestReading.co2 != null ? `${Number(latestReading.co2).toFixed(0)} ppm` : "N/A"}
-                    icon={Wind}
-                    color="text-gray-400"
-                  />
-                  <SensorMetric
-                    title="Soil pH"
-                    value={latestReading.soil_ph != null ? Number(latestReading.soil_ph).toFixed(1) : "N/A"}
-                    icon={Activity}
-                    color="text-purple-500"
-                  />
-                  <SensorMetric
-                    title="Conductivity"
-                    value={latestReading.conductivity != null ? `${Number(latestReading.conductivity).toFixed(1)} mS/cm` : "N/A"}
-                    icon={Zap}
-                    color="text-yellow-400"
-                  />
+              ) : latestReadings.length > 0 ? (
+                <div className="space-y-6">
+                  {Object.entries(readingsByField).map(([fieldId, fieldReadings]) => {
+                    const field = fields.find((f) => f.field_id === Number(fieldId));
+                    return (
+                      <div key={fieldId}>
+                        <h4 className="text-sm font-semibold text-muted-foreground mb-3 flex items-center gap-2">
+                          <Sprout className="h-3.5 w-3.5" />
+                          {field?.name ?? `Field #${fieldId}`}
+                          <span className="text-xs font-normal text-muted-foreground/60">
+                            ({fieldReadings.length} device{fieldReadings.length > 1 ? "s" : ""})
+                          </span>
+                        </h4>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                          {(() => {
+                            const r = fieldReadings[0];
+                            return (
+                              <>
+                                <SensorMetric title="Air Temp" value={r.temperature_air != null ? `${Number(r.temperature_air).toFixed(1)}°C` : "N/A"} icon={Thermometer} color="text-orange-500" />
+                                <SensorMetric title="Humidity" value={r.humidity_air != null ? `${Number(r.humidity_air).toFixed(0)}%` : "N/A"} icon={Wind} color="text-blue-500" />
+                                <SensorMetric title="Soil Moisture" value={r.soil_moisture != null ? `${Number(r.soil_moisture).toFixed(0)}%` : "N/A"} icon={Droplets} color="text-emerald-500" />
+                                <SensorMetric title="Soil Temp" value={r.temperature_soil != null ? `${Number(r.temperature_soil).toFixed(1)}°C` : "N/A"} icon={Thermometer} color="text-orange-400" />
+                                <SensorMetric title="Light" value={r.light_intensity != null ? `${Number(r.light_intensity).toFixed(0)} lx` : "N/A"} icon={Sun} color="text-yellow-500" />
+                                <SensorMetric title="CO2" value={r.co2 != null ? `${Number(r.co2).toFixed(0)} ppm` : "N/A"} icon={Wind} color="text-gray-400" />
+                                <SensorMetric title="Soil pH" value={r.soil_ph != null ? Number(r.soil_ph).toFixed(1) : "N/A"} icon={Activity} color="text-purple-500" />
+                                <SensorMetric title="Conductivity" value={r.conductivity != null ? `${Number(r.conductivity).toFixed(1)} mS/cm` : "N/A"} icon={Zap} color="text-yellow-400" />
+                              </>
+                            );
+                          })()}
+                        </div>
+                        {fieldReadings.length > 1 && (
+                          <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2">
+                            <p className="text-xs text-muted-foreground col-span-4">
+                              {fieldReadings.length - 1} more device{fieldReadings.length > 2 ? "s" : ""} reporting —
+                              <span className="text-xs text-muted-foreground/60 ml-1">
+                                {fieldReadings.slice(1).map((dr) => {
+                                  const dev = devices.find((d) => d.device_id === dr.device_id);
+                                  return dev?.device_type ?? `device #${dr.device_id}`;
+                                }).join(", ")}
+                              </span>
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               ) : (
-                <p className="text-sm text-muted-foreground text-center py-8">No sensor readings available</p>
+                <p className="text-sm text-muted-foreground text-center py-8">No sensor readings available. Ensure devices are sending data.</p>
               )}
             </CardContent>
           </Card>
@@ -240,26 +225,16 @@ export function OverviewPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              {summariesLoading ? (
-                <Skeleton className="h-20" />
-              ) : (
-                <>
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm text-muted-foreground">Events (30 days)</span>
-                    <span className="text-lg font-bold">{totalIrrigationEvents}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm text-muted-foreground">Last Event</span>
-                    <span className="text-sm font-medium">
-                      {lastIrrigationEvent
-                        ? new Date(
-                            (lastIrrigationEvent as any).start_time || (lastIrrigationEvent as any).sent_at
-                          ).toLocaleDateString()
-                        : "N/A"}
-                    </span>
-                  </div>
-                </>
-              )}
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-muted-foreground">Today Events</span>
+                <span className="text-lg font-bold">{totalIrrigationEvents}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-muted-foreground">Today Duration</span>
+                <span className="text-sm font-medium">
+                  {todayIrrigationDuration > 0 ? `${todayIrrigationDuration.toFixed(0)} min` : "N/A"}
+                </span>
+              </div>
             </CardContent>
           </Card>
 
