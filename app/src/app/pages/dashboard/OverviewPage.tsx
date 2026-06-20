@@ -8,13 +8,14 @@ import {
   Sun,
   AlertTriangle,
   Sprout,
-  ScanLine,
+  Bot,
 } from "lucide-react";
 import { useAppData } from "../../contexts/AppDataContext";
 import { api } from "../../lib/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import { Badge } from "../../components/ui/badge";
 import { Skeleton } from "../../components/ui/skeleton";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
 
 
 interface SensorReading {
@@ -37,7 +38,7 @@ interface SensorReading {
 export function OverviewPage() {
   const { farms, fields, devices, nodeStatuses, activeFarmId, dashboardData, loading } = useAppData();
   const [latestReadings, setLatestReadings] = useState<SensorReading[]>([]);
-  const [readingsLoading, setReadingsLoading] = useState(false);
+  const [readingsLoaded, setReadingsLoaded] = useState(false);
 
   const activeFarm = farms.find((f) => f.farm_id === activeFarmId);
 
@@ -53,12 +54,13 @@ export function OverviewPage() {
 
   useEffect(() => {
     if (!activeFarmId) return;
-    setReadingsLoading(true);
     api.web.sensorsLatest(undefined, activeFarmId)
       .then((res) => setLatestReadings((res.readings ?? []) as SensorReading[]))
       .catch(() => setLatestReadings([]))
-      .finally(() => setReadingsLoading(false));
+      .finally(() => { if (!readingsLoaded) setReadingsLoaded(true); });
   }, [activeFarmId]);
+
+  const [selectedFieldId, setSelectedFieldId] = useState<string>("all");
 
   const readingsByField = latestReadings.reduce<Record<number, SensorReading[]>>((acc, r) => {
     const device = devices.find((d) => d.device_id === r.device_id);
@@ -68,8 +70,29 @@ export function OverviewPage() {
     return acc;
   }, {});
 
-  const totalIrrigationEvents = dashboardData?.today_irrigation_events ?? 0;
-  const todayIrrigationDuration = dashboardData?.today_irrigation_duration_minutes ?? 0;
+  const fieldIds = Object.keys(readingsByField).map(Number);
+  const activeFieldIds = selectedFieldId === "all" ? fieldIds : [Number(selectedFieldId)];
+
+  const [aiSummary, setAiSummary] = useState<string | null>(null);
+  const [aiSummaryLoaded, setAiSummaryLoaded] = useState(false);
+
+  useEffect(() => {
+    if (!activeFarmId || !dashboardData || latestReadings.length === 0) return;
+    let cancelled = false;
+    const latest = latestReadings[0];
+    const context = [
+      `Farm has ${fields.length} fields, ${devices.length} devices.`,
+      `Active nodes: ${dashboardData.active_nodes}, Alerts: ${dashboardData.alerts_count}.`,
+      `Latest reading - Air: ${latest.temperature_air ?? "N/A"}°C, Humidity: ${latest.humidity_air ?? "N/A"}%, Soil Moisture: ${latest.soil_moisture ?? "N/A"}%.`,
+    ].join(" ");
+    api.ai.ask({
+      question: `Give me a very brief farm status summary (2-3 sentences) based on: ${context}`,
+    })
+      .then((res) => { if (!cancelled) setAiSummary(res.answer); })
+      .catch(() => { if (!cancelled) setAiSummary("Unable to fetch AI summary right now."); })
+      .finally(() => { if (!cancelled) setAiSummaryLoaded(true); });
+    return () => { cancelled = true; };
+  }, [activeFarmId, dashboardData, latestReadings.length]);
 
   if (loading) {
     return (
@@ -117,12 +140,27 @@ export function OverviewPage() {
           {/* B. Live Sensor Panel */}
         <div className="xl:col-span-2 space-y-6">
           <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
-            <CardHeader>
-              <CardTitle>Live Sensor Readings</CardTitle>
-              <CardDescription>Latest data from active sensor nodes across all fields</CardDescription>
+            <CardHeader className="flex flex-row items-center justify-between gap-4">
+              <div>
+                <CardTitle>Live Sensor Readings</CardTitle>
+                <CardDescription>Latest data from active sensor nodes</CardDescription>
+              </div>
+              <Select value={selectedFieldId} onValueChange={setSelectedFieldId}>
+                <SelectTrigger className="w-[180px]">
+                  <SelectValue placeholder="Select field" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Fields</SelectItem>
+                  {fields.map((f) => (
+                    <SelectItem key={f.field_id} value={String(f.field_id)}>
+                      {f.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </CardHeader>
             <CardContent>
-              {readingsLoading ? (
+              {!readingsLoaded ? (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   {[1, 2, 3, 4].map((i) => (
                     <Skeleton key={i} className="h-24 rounded-xl" />
@@ -130,7 +168,7 @@ export function OverviewPage() {
                 </div>
               ) : latestReadings.length > 0 ? (
                 <div className="space-y-6">
-                  {Object.entries(readingsByField).map(([fieldId, fieldReadings]) => {
+                  {Object.entries(readingsByField).filter(([fid]) => activeFieldIds.includes(Number(fid))).map(([fieldId, fieldReadings]) => {
                     const field = fields.find((f) => f.field_id === Number(fieldId));
                     return (
                       <div key={fieldId}>
@@ -202,39 +240,25 @@ export function OverviewPage() {
         <div className="space-y-6">
           {/* D. AgroAssist Panel */}
           <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <ScanLine className="h-4 w-4 text-emerald-500" />
-                AgroAssist
-              </CardTitle>
-              <CardDescription>Disease detection summary</CardDescription>
+            <CardHeader className="flex items-center gap-2 pb-3">
+              <Bot className="h-5 w-5 text-emerald-500 shrink-0" />
+              <div>
+                <CardTitle className="text-base">AgroAssist</CardTitle>
+                <CardDescription>AI farm summary</CardDescription>
+              </div>
             </CardHeader>
             <CardContent>
-              <p className="text-sm text-muted-foreground text-center py-6">
-                Run crop scans to get AI-powered disease detection insights
-              </p>
-            </CardContent>
-          </Card>
-
-          {/* E. Events Summary */}
-          <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Droplets className="h-4 w-4 text-blue-500" />
-                Events
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">Today Events</span>
-                <span className="text-lg font-bold">{totalIrrigationEvents}</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">Today Duration</span>
-                <span className="text-sm font-medium">
-                  {todayIrrigationDuration > 0 ? `${todayIrrigationDuration.toFixed(0)} min` : "N/A"}
-                </span>
-              </div>
+              {!aiSummaryLoaded ? (
+                !aiSummary ? (
+                  <p className="text-sm text-muted-foreground text-center py-4">Loading farm insights...</p>
+                ) : (
+                  <p className="text-sm text-muted-foreground leading-relaxed">{aiSummary}</p>
+                )
+              ) : aiSummary ? (
+                <p className="text-sm text-muted-foreground leading-relaxed">{aiSummary}</p>
+              ) : (
+                <p className="text-sm text-muted-foreground text-center py-4">No summary available</p>
+              )}
             </CardContent>
           </Card>
 
