@@ -73,7 +73,7 @@ CREATE TABLE `ChatMessages` (
 CREATE TABLE `Devices` (
   `device_id` int NOT NULL,
   `field_id` int NOT NULL,
-  `device_type` enum('ESP32','ESP32-CAM') NOT NULL,
+  `device_type` varchar(50) NOT NULL COMMENT 'hardware model, e.g. AgroEye Sense C3 / AgroEye Gateway S3 (legacy: ESP32, ESP32-CAM)',
   `serial_number` varchar(50) NOT NULL,
   `location_coords` varchar(100) DEFAULT NULL,
   `status` enum('active','inactive','maintenance') DEFAULT 'active',

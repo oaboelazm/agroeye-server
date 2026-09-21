@@ -840,21 +840,37 @@ def delete_field(data: DeleteFieldRequest, db: Session = Depends(get_db)):
 
 @app.post("/mobile/manage/create-device")
 def create_device(data: CreateDeviceRequest, db: Session = Depends(get_db)):
-    db.execute(
-        text("""
-            INSERT INTO Devices
-            (field_id, device_type, serial_number, location_coords, status)
-            VALUES (:fid, :type, :serial, :coords, :status)
-        """),
-        {
-            "fid": data.field_id,
-            "type": data.device_type,
-            "serial": data.serial_number,
-            "coords": data.location_coords,
-            "status": data.status
-        }
-    )
-    db.commit()
+    device_type = (data.device_type or "").strip()
+    if not device_type:
+        raise HTTPException(status_code=400, detail="device_type is required")
+    if len(device_type) > 50:
+        raise HTTPException(
+            status_code=400,
+            detail="device_type must be 50 characters or less",
+        )
+    try:
+        db.execute(
+            text("""
+                INSERT INTO Devices
+                (field_id, device_type, serial_number, location_coords, status)
+                VALUES (:fid, :type, :serial, :coords, :status)
+            """),
+            {
+                "fid": data.field_id,
+                "type": device_type,
+                "serial": data.serial_number,
+                "coords": data.location_coords,
+                "status": data.status
+            }
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("create_device failed for field %s", data.field_id)
+        raise HTTPException(
+            status_code=400,
+            detail="Could not register device. Please check the device data and try again.",
+        )
     return {"status": "success", "message": "Device created"}
 
 
@@ -864,18 +880,36 @@ def update_device(data: UpdateDeviceRequest, db: Session = Depends(get_db)):
     if not fields:
         return {"status": "error", "message": "No fields provided"}
 
+    if "device_type" in fields:
+        fields["device_type"] = (fields["device_type"] or "").strip()
+        if not fields["device_type"]:
+            raise HTTPException(status_code=400, detail="device_type is required")
+        if len(fields["device_type"]) > 50:
+            raise HTTPException(
+                status_code=400,
+                detail="device_type must be 50 characters or less",
+            )
+
     set_clause = ", ".join(f"{k} = :{k}" for k in fields.keys())
     fields["device_id"] = data.device_id
 
-    db.execute(
-        text(f"""
-            UPDATE Devices
-            SET {set_clause}
-            WHERE device_id = :device_id
-        """),
-        fields
-    )
-    db.commit()
+    try:
+        db.execute(
+            text(f"""
+                UPDATE Devices
+                SET {set_clause}
+                WHERE device_id = :device_id
+            """),
+            fields
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("update_device failed for device %s", data.device_id)
+        raise HTTPException(
+            status_code=400,
+            detail="Could not update device. Please check the device data and try again.",
+        )
     return {"status": "success", "message": "Device updated"}
 
 
