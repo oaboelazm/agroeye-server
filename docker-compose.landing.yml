@@ -1,0 +1,24 @@
+services:
+  landing:
+    image: nginx:1.27-alpine
+    restart: always
+
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO /dev/null http://localhost/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    ports:
+      - "80:80"
+
+    volumes:
+      - ./landing:/usr/share/nginx/html:ro
+
+    networks:
+      - landing_net
+
+networks:
+  landing_net:
+    driver: bridge
