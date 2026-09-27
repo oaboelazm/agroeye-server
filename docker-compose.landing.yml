@@ -1,6 +1,9 @@
 services:
   landing:
-    image: nginx:1.27-alpine
+    build:
+      context: ./landing
+      dockerfile: Dockerfile
+    image: agroeye-landing:latest
     restart: always
 
     healthcheck:
@@ -12,9 +15,6 @@ services:
 
     ports:
       - "80:80"
-
-    volumes:
-      - ./landing:/usr/share/nginx/html:ro
 
     networks:
       - landing_net
