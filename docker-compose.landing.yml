@@ -14,7 +14,7 @@ services:
       start_period: 10s
 
     ports:
-      - "80:80"
+      - "${LANDING_PORT:-8081}:80"
 
     networks:
       - landing_net
